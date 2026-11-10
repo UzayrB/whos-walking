@@ -1,0 +1,27 @@
+# Laptop only, never uploaded.
+# The list that joins participant codes (P1-P6) to the names the thesis recordings are filed under (and any other
+# *.local.* file, wherever it is):
+configs/*.local.yaml
+*.local.*
+# The trained model (consent form: never published), any backup or manifest of it, and all other run state (room
+# measurement, visitor count, caches):
+state/
+model_backup_*/
+manifest.json
+# Raw recordings, home-test reports, logs, the retrain record, the build log, test leftovers:
+bench/
+reports/bench_*.md
+reports/progress.md
+logs/
+training_*/
+.pytest_tmp/
+__pycache__/
+*.pyc
+.DS_Store
+# Data files and archives, wherever they are (the app is only code, text and pictures):
+*.bin
+*.npz
+*.npy
+*.pkl
+*.zip
+*.tar.gz

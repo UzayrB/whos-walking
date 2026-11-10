@@ -1,0 +1,189 @@
+# OpenDay "Who's walking?" demo: every constant lives here.
+# Lines marked "fitted by eval" are rewritten by `python -m openday eval` ("fitted by eval-pair": by eval-pair --write).
+
+radio:
+  fs_hz: 150.0                 # uniform resampling grid (TX rate)
+  wavelength_m: 0.12177        # channel 11, 2462 MHz
+  bistatic_factor: 0.937       # fitted by eval (about 1 for TX and RX side by side)
+  # speed v = f * wavelength / (2 * bistatic_factor); at F = 1 that is f * 0.0609 m/s per Hz
+
+subcarriers:
+  # development/identify/RunLive/support/id19_bank.py DROP: DC, guard and null bins
+  drop: [0, 1, 64, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 96, 97, 98, 99, 100, 101, 102, 103]
+  null_sc: [93, 94, 95]           # development/identify/RunLive/support/id19_featbank.py NULL_SC (measured nulls)
+  n_live: 103
+
+clock:
+  modulus_us: 4294967296       # receiver local_timestamp is a 32-bit microsecond counter
+  wrap_margin_us: 2000000      # a backwards step within this of the top is a wrap, else a restart
+  offset_block_s: 5.0          # host-minus-device offset: lower envelope in blocks of this length
+  offset_blocks: 6             # ... over this many blocks (30 s)
+
+dsp:
+  gap_s: 0.05                  # resampled samples bridging a longer packet gap are marked as gaps
+  restart_gap_s: 1.0           # a longer silence restarts the chain (filters re-warm)
+  tick_batch: 8                # run the chain in tick once this many packets are waiting ...
+  tick_max_wait_s: 0.1         # ... or the oldest has waited this long
+  hampel_window: 7
+  hampel_sigmas: 3.0
+  hampel_mad_scale: 1.4826
+  filter_low_hz: 3.0           # high-pass corner (Butterworth, causal, per subcarrier)
+  filter_order: 4
+  variant: A                   # fitted by eval: A = PCA (drop PC1, keep PCs 2-4), B = sum over subcarriers
+  pca_window_s: 2.0
+  pca_refit_s: 0.5
+  pca_keep: [2, 3, 4]
+  nperseg: 32                  # 0.21 s
+  noverlap: 24                 # hop 8 samples = 53 ms, 18.75 columns/s
+  window: hann
+  nfft: 128                    # fitted by eval (64 or 128)
+  band_hz: [3.0, 70.0]         # contours and energy use this band
+  floor_scale: 1.0             # above-floor power = clip(power - floor_scale * floor, 0)
+  active_k: 6.0                # a column is active when energy > active_k * baseline median energy
+
+walk:                          # a walk ends on the first of: stopped, arrived, operator, nothing, limit
+  min_active_s: 1.5            # fewer active seconds than this: not seen ("Missed that one.")
+  quiet_s: 0.5                 # "stopped": this much quiet (once min_active_s has been seen)
+  arrive_min_x: 80.0           # "arrived": once seen and the smoothed energy has peaked at >= this x the room's
+  arrive_hold_s: 0.5           # ... median energy (e0), no new peak for this long; the peak is the arrival (t_arrive)
+  arrive_jump_x: 4.0           # ... and the peak is at least this x the walk's median energy so far (0 = off): a bump
+                               # in the middle of a walk does not end it, the jump at the X does
+  stop_min_s: 1.5              # "operator": a stop request sooner than this after the click is a double press
+  give_up_s: 5.0               # "nothing": this long after the click with ...
+  give_up_active_s: 0.3        # ... less than this active: not seen, end now (0 = off)
+  max_s: 9.0                   # "limit": hard limit after the click
+  after_end_lock_s: 3.0        # a start this soon after a walk ended is ignored (device time) and the main button
+                               # is drawn grey: a late They've stopped click (the walk ended by itself about 0.5 s
+                               # after the stop) starts nothing; going back 3 m takes longer
+  active_smooth: 5             # causal running median of energy over this many columns before thresholding
+  preclick_cols: 40            # columns kept so a new walk starts with its pre-click history (about 2 s)
+  guard_s: 2.0                 # a walk (or baseline) with no columns this long past its end is closed anyway
+
+features:
+  names: [speed, steps, swing, bounce]
+  step_lag_s: [0.4, 0.75]      # 80 to 150 steps/min
+  step_detrend_order: 2        # polynomial detrend of the log-energy envelope ...
+  step_diff: true              # ... then its first difference
+
+gait:                          # the thesis's single-link gait features (openday/walks.py), RX2 only
+  keep_s: 12.0                 # pre-high-pass samples kept for them; at least walk.max_s + walk.guard_s + 1
+  max_window_s: 6.0            # computed from the click to the walk's arrival (t_arrive), at most this long
+  min_window_s: 1.5            # shorter: the gait features are missing (NaN) and the model falls back on the rest
+
+classifier:
+  kind: m1                     # fitted by eval-pair: m0 (nearest centroid, readouts), m1 (learned whitening), m2 (pairwise)
+  model_path: state/model/model.json   # m1 / m2: the trained model, fitted on the six thesis people only
+                                       # (eval-pair --write would overwrite it with its own recipe)
+  model_tau: 0.1043            # m1 / m2: a margin below this is a close call: the answer still names the nearer
+                               # person, and the log counts it; about 15 % of live test decisions fall below it
+  use: [speed, steps, swing, bounce]   # m0: features the decision uses (the tiles always show all four)
+  tau: 0.08                    # fitted by eval: m0 only (no trained model): a margin below this is a close call
+                               # (logged; the answer still names the nearer person)
+  prior_sd:                    # fitted by eval: floor on each feature's spread
+    speed: 0.0609
+    steps: 20.3
+    swing: 0.177
+    bounce: 0.0444
+
+pools:
+  n_uzayr: 5                   # the most learning walks Uzayr's pool keeps (at least n_enrol)
+  n_visitor: 5                 # the most learning walks the visitor's pool keeps (at least n_enrol)
+  n_enrol: 2                   # learning walks per person (2 each cost about 2-3 points against 3, ~45 s quicker)
+  enrol_order: visitor_first   # visitor_first (the visitor walks n_enrol times, then Uzayr) or alternate (Uzayr
+                               # first, then taking turns: U, V, U, V)
+  uzayr_reuse_min: 25          # Uzayr's learning walks are kept (memory only) and reused for the next player while
+                               # all are younger than this when New player is clicked AND were taken after the
+                               # current room measurement in this app run; else he walks again after the visitor.
+                               # 0 = never: he walks every round. With 25 a game decides on walks up to about
+                               # 28-30 min old (no ageing was seen within a run); worst case about 3-4 points lower.
+                               # Their age is on Uzayr's line between walks ("Uzayr's walks: 6 min old.")
+
+baseline:
+  live_s: 10.0
+  bench_s: 30.0
+  max_reuse_min: 20            # a cached live baseline younger than this can be reused with Enter (not in --record)
+  min_cols: 20                 # fewer columns than this and the baseline is refused
+  delay_s: 5.0                 # Measure room counts down this long (time to step back) before measuring
+  recheck_ratio: 1.3           # a measurement this many times the run's quietest asks to measure again
+
+health:
+  busy_window_s: 1.0
+  busy_amber: 2.0
+  silent_s: 1.0
+  rate_red: 100.0
+  rate_window_s: 2.0
+  busy_hold_s: 3.0             # the light: busy (>= busy_amber) this long -> amber "Wait for green"
+  after_walk_s: 8.0            # ... but within this long of a walk's end it is the walker going back (grey)
+
+ui:
+  double_click_s: 0.8          # the same small button clicked again this soon is ignored (a double-click)
+  fps_max: 15.0
+  fps_min: 4.0
+  lag_limit_s: 0.3
+  lag_ok_s: 0.1
+  lag_fresh_s: 0.2             # lag (now minus the newest t_mono) is only measured while packets are flowing
+  waterfall_s: 6.0
+  speed_max_mps: 4.5
+  speed_smooth_s: 0.3
+  line_smooth: 5               # display only: running median of the body-speed line, in columns
+  tile_ranges:                 # the tiles' comparison bars run from the first value to the second
+    speed: [0.0, 2.5]
+    steps: [60.0, 160.0]
+    swing: [1.0, 4.0]
+    bounce: [0.0, 0.8]
+  reading_s: 0.7
+  db_range: 30.0               # waterfall colour range above the floor, in dB
+  # The 3D picture above the waterfall (openday/chain.py; display only, nothing reaches a decision): how much each
+  # subcarrier's amplitude wobbles (the waterfall's movement), a bar per subcarrier coloured purple (flat) to yellow
+  # (tallest): flat in a still room, standing up with a walk (the waterfall's energy jumps some 10-50x; the bars
+  # stand about 10x as tall)
+  ridge_s: 4.0                 # seconds of ridges, newest in front (one ridge per waterfall column, 53 ms; a row of
+                               # bars for every third)
+  ridge_ease: 0.5              # each ridge takes this share of its new shape (the rest from the ridge before it), so
+                               # the shape flows instead of flickering (1 = no easing)
+  ridge_smooth: 3              # running mean across that many neighbouring subcarriers (frequency order) first
+                               # (odd, so it stays centred: an even number is taken as the next odd one)
+  name_max_len: 16
+  quit_confirm_s: 4.0
+
+keys:                          # each action's keys; the comment names its button
+  start_walk: [space, pagedown, right, down]   # the big button (Measure room / Start walk / They've stopped /
+                                               # Next walk), sends Space
+  discard: [pageup, left, backspace]   # Undo walk / Cancel walk (the button sends Backspace)
+  clicker_back: [pageup, left] # cancels a walk or redoes a turn, never throws away an answer
+  new_visitor: [n]             # New player
+  confirm_uzayr: [u]           # It was Uzayr (recordings only)
+  confirm_visitor: [v]         # It was <visitor's name> (recordings only)
+  enrol_uzayr: [ctrl+u]        # Redo my walks
+  baseline: [ctrl+b]           # Measure room (top right)
+  reuse_baseline: [enter]      # Use last measurement
+  wipe_visitor: [ctrl+n]       # End game
+  fullscreen: [ctrl+f]         # no button: the app opens full screen
+  debug: [ctrl+d]              # Details
+  quit: [ctrl+q]               # Quit
+  quit_yes: [y]                # Yes, quit / Yes, end it (in the open box)
+
+replay:
+  pre_s: 1.0                   # walk segment starts this long before the first anchor ...
+  post_s: 1.0                  # ... and ends this long after the last
+  gap_s: 4.0                   # default idle gap between steps (a script may override)
+  lead_s: 3.0                  # idle frames before the first step
+  tail_s: 6.0                  # idle frames after the last step
+  key_interval_s: 0.08         # between injected keystrokes when typing a name
+  start_delay_s: 2.0           # stream starts this long after the readers are ready
+  xfade_s: 0.5                 # joins between recordings are cross-faded in amplitude over this long, which
+                               # reduces (does not remove) the false motion a join makes (replay only)
+
+eval:
+  lane_m: 5.0                  # ground-truth pace = lane_m / (last anchor - first anchor)
+  end_after_last_s: 0.0        # an offline walk window closes this long after the last anchor (the stop line)
+  draws: 50
+  seed: 20261118
+  warmup_s: 3.0                # chain warm-up before the walk segment's own pre_s (same recording)
+  not_sure_max: 0.15
+  enrol_sizes: [1, 2, 3, 5]
+  enrol_n: 3
+  bench_pass_bar: 18
+  bench_enrol: 5               # per person, from the alternating enrolment
+  bench_tests: 20
+  bench_break_min: 45          # runs split at the largest gap between runs (at least this long) = the break
