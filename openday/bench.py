@@ -6,7 +6,7 @@ app's events (events.jsonl) of each run. Everything here re-runs those recording
 This file, in order:
   1. The two-person bench session protocol (`bench-checklist`).
   2. A recorded run through the live chain again: bench_runs, bench_columns, bench_rounds (the pools each game walk
-     was decided on), bench_detect and bench_walks.
+     was decided on), bench_detect, bench_walks and second_looks (a close call's answer from both walks again).
   3. Scoring a session (`eval --bench`): run_bench writes reports/bench_<DIR>.md.
   4. Walk detection on recorded runs (`bench-check`): prints only, writes nothing.
 """
@@ -43,18 +43,19 @@ apart in a real room. Type the commands in the VS Code terminal, in the OpenDay 
  4. Quit (Quit, then Yes, quit). A break of at least 45 minutes.
  5. Start recording again with the same command (each run gets its own folder) and Measure room again.
     Click New player; the friend types their name, then OK. Walk as the screen says: the friend twice, then
-    Uzayr twice. These need no other click: each walk is labelled by its turn (the wrong person walked? Undo
+    Uzayr five times. These need no other click: each walk is labelled by its turn (the wrong person walked? Undo
     walk, and the turn is walked again). When the game starts, keep alternating until EACH has walked 5 times,
     clicking It was Uzayr or It was <friend> after each game walk.
  6. Test: 20 walks. Before each, flip a coin (heads Uzayr, tails friend); that person walks. After the answer,
     click It was Uzayr or It was <friend> for who really walked. One click is final (both buttons go dim);
-    a wrong click: Undo walk removes that walk.
+    a wrong click: Undo walk removes that walk. "Walk once more!" (too close to call): the same person walks once
+    more (no coin flip; it is not one of the 20), and It was ... after that answer labels both walks.
  7. Optional: 4 walks each at a matched pace (both walk to a phone metronome at the same beat). Click It was ...
     for each.
  8. Quit, then score it:
       PYTHONDONTWRITEBYTECODE=1 /opt/anaconda3/bin/python3 -m openday eval --bench bench/{day}
-    The report scores the shipped model (with 5 + 5 and with 3 + 3 learning walks; the app uses 2 + 2 on the
-    day) beside the nearest-centre rule (m0) and speed alone.
+    The report scores the shipped model (with 5 + 5, 3 + 3, the app's round 2 + 5 (the friend's 2, Uzayr's 5)
+    and the older 2 + 2) beside the nearest-centre rule (m0) and speed alone, and the second looks.
 
 Someone else walked through? Cancel walk during the walk, Undo walk after it.
 Pass bar: the alternating pool (step 5) gets at least 18 of the 20 test walks right.
@@ -108,9 +109,10 @@ def bench_rounds(ev: list) -> tuple[list[dict], dict]:
     uzayr_reused event follows: it names the walk ids of his earlier learning walks the round reuses. Redo my walks
     (uzayr_redo) starts a new set of his walks at any time; uzayr_kept (Undo walk right after it) brings the old set
     back; uzayr_dropped (Measure room while learning) empties his set. Returns (rounds, pools): per player {index,
-    t_mono, reused (walk ids), redo (bool), games (game walk ids)}, and per game walk (purpose test) {"u": [walk
-    ids], "v": [walk ids]}, the pools it was decided on. Recordings from before reuse (Uzayr walked with every
-    player) rebuild the same way, with nothing reused."""
+    t_mono, reused (walk ids), redo (bool), games (game walk ids), seconds ({second look's walk id: its close
+    call's})}, and per game walk (purpose test) {"u": [walk ids], "v": [walk ids]}, the pools it was decided on (a
+    second look, classifier.second_look, is a game walk with "second_of": the same pools as its close call).
+    Recordings from before reuse (Uzayr walked with every player) rebuild the same way, with nothing reused."""
     rounds, pools = [], {}
     uz: list = []                                          # Uzayr's learning walks in use (kept across players)
     vis: list = []                                         # this player's
@@ -119,7 +121,8 @@ def bench_rounds(ev: list) -> tuple[list[dict], dict]:
     for e in ev:
         k = e.get("kind")
         if k == "new_visitor":
-            cur = {"index": e.get("index"), "t_mono": e.get("t_mono"), "reused": [], "redo": False, "games": []}
+            cur = {"index": e.get("index"), "t_mono": e.get("t_mono"), "reused": [], "redo": False, "games": [],
+                   "seconds": {}}
             rounds.append(cur)
             uz, vis = [], []
         elif k == "uzayr_reused":
@@ -153,6 +156,8 @@ def bench_rounds(ev: list) -> tuple[list[dict], dict]:
             pools[e["id"]] = {"u": list(uz), "v": list(vis)}
             if cur is not None:
                 cur["games"].append(e["id"])
+                if e.get("second_of") is not None:
+                    cur["seconds"][e["id"]] = e["second_of"]
     return rounds, pools
 
 
@@ -244,7 +249,7 @@ def bench_detect(cfg: dict, run_dir: str, bc: Optional[dict] = None,
         spans.append((k, t, t_end))
         f = walks.walk_features(w.arrays(), hop, cfg) if w is not None and w.seen else None
         rows.append({"id": e["id"], "t": e["t_click"], "label": labels.get(e["id"]),
-                     "purpose": e.get("purpose"), "pools": at.get(e["id"]),
+                     "purpose": e.get("purpose"), "pools": at.get(e["id"]), "second_of": e.get("second_of"),
                      "discarded": e["id"] in discarded, "live_seen": bool(e.get("seen")),
                      "live_reason": e.get("reason"), "live_t_end": e.get("t_end"), "live_f": e.get("f"),
                      "e0": base.e0 if base is not None else None,
@@ -303,7 +308,7 @@ def bench_walks(cfg: dict, run_dir: str) -> tuple[list[dict], dict]:
                     "x": np.array([f[n] for n in cfg["features"]["names"]], float), "run": bc["run"],
                     "reason": r["reason"], "live_reason": r["live_reason"], "active_s": r["active_s"],
                     "t_end": r["t_end"], "t_arrive": r["t_arrive"], "_win": r["_win"],
-                    "purpose": r["purpose"], "pools": r["pools"]})
+                    "purpose": r["purpose"], "pools": r["pools"], "second_of": r.get("second_of")})
     _bench_gait(cfg, bc["fr"], out, bc["batch"])
     return out, skipped
 
@@ -326,7 +331,71 @@ def _bench_gait(cfg: dict, fr: np.ndarray, rows: list, batch: int) -> None:
         w.pop("_win", None)
 
 
+def second_looks(cfg: dict, ws: list[dict], model=None) -> list[dict]:
+    """The second looks (classifier.second_look) of a recorded run, decided again from its walks (bench_walks: the
+    labelled, seen, undiscarded walks, features recomputed): each game walk with "second_of" whose close call is
+    there too, both decided again against the pools they were decided on (bench_rounds; every pool walk must be
+    there), the close call alone and both walks averaged (models.average_walks), as the app does (`model`: the
+    trained model; None: m0). One row per pair: {first, second, label, alone (the close call's answer), both (the
+    answer from both walks), margin (both)}."""
+    by_id = {w["id"]: w for w in ws}
+    use = list(cfg["classifier"].get("use", cfg["features"]["names"]))
+
+    def decide(f: dict, pools: dict):
+        if model is not None:
+            return MD.decide(model, f, {k: [g["f"] for g in v] for k, v in pools.items()})
+        P = {k: np.array([[g["f"][n] for n in use] for g in v], float) for k, v in pools.items()}
+        return MD.decide_m0(np.array([f[n] for n in use], float), P, use, cfg)
+
+    out = []
+    for w in ws:
+        first = by_id.get(w.get("second_of"))
+        if first is None or not w.get("pools") or w["label"] != first["label"]:
+            continue
+        ids = {"uzayr": w["pools"]["u"], "visitor": w["pools"]["v"]}
+        if not all(i in by_id for v in ids.values() for i in v):
+            continue
+        pools = {k: [by_id[i] for i in v] for k, v in ids.items()}
+        a, b = decide(first["f"], pools), decide(MD.average_walks([first["f"], w["f"]]), pools)
+        if a is None or b is None:
+            continue
+        out.append({"first": first["id"], "second": w["id"], "label": w["label"], "alone": a.label,
+                    "both": b.label, "margin": b.margin})
+    return out
+
+
 # --- 3. Scoring a session (eval --bench) ---
+
+
+def split_session(post: list[dict], n_en: int, n_te: int) -> tuple[list, list, list, list]:
+    """The session after the break, in order, as (eu, ev_, tests, matched): the first n_en U and n_en V walks (the
+    alternating pool), the next n_te walks (the test), the rest (matched pace). A second look (classifier
+    .second_look: a walk with "second_of", the same walker once more after a close call) is not a walk of its own
+    here: it never takes a pool or test place (second_looks and as_shown use it)."""
+    main = [w for w in post if w.get("second_of") is None]
+    eu = [w for w in main if w["label"] == "u"][:n_en]
+    ev_ = [w for w in main if w["label"] == "v"][:n_en]
+    end = max((main.index(w) for w in eu + ev_), default=-1)
+    return eu, ev_, main[end + 1:end + 1 + n_te], main[end + 1 + n_te:]
+
+
+def as_shown(cfg: dict, walks_: list[dict], allw: list[dict]) -> tuple[list[dict], int]:
+    """Each walk as the round showed its answer: a close call walked once more (a labelled second look of the same
+    walker among allw) was answered from both walks, so it is scored on both walks' readings averaged
+    (models.average_walks, as the app decides); every other walk as it is. Returns (walks, how many were paired)."""
+    names = list(cfg["features"]["names"])
+    second = {(w.get("run"), w["second_of"]): w             # (by run too: each app run numbers its walks anew)
+              for w in allw if w.get("second_of") is not None}
+    out, n = [], 0
+    for w in walks_:
+        s = second.get((w.get("run"), w["id"]))
+        if s is None or s["label"] != w["label"]:
+            out.append(w)
+            continue
+        f = MD.average_walks([w["f"], s["f"]])
+        out.append(dict(w, f=f, x=np.array([f[k] for k in names], float), both_with=s["id"]))
+        n += 1
+    return out, n
 
 
 def _score(cfg: dict, pools: dict, tests: list, use, tau: Optional[float] = None, model=None) -> dict:
@@ -384,12 +453,10 @@ def run_bench(cfg: dict, d: str, log=print) -> str:
     gap_min = (spans[cut][0] - spans[cut - 1][1]) / 60.0 if 0 < cut < len(runs) else float("nan")
     pre = sorted([w for _, ws in per_run[:cut] for w in ws], key=lambda w: w["t"])
     post = sorted([w for _, ws in per_run[cut:] for w in ws], key=lambda w: (w["run"], w["t"]))
-    eu = [w for w in post if w["label"] == "u"][:n_en]
-    ev_ = [w for w in post if w["label"] == "v"][:n_en]
-    end = max((post.index(w) for w in eu + ev_), default=-1)
-    tests = post[end + 1:end + 1 + n_te]
-    matched = post[end + 1 + n_te:]
-    stale = [w for w in pre if w["label"] == "u"][-n_en:]
+    eu, ev_, tests, matched = split_session(post, n_en, n_te)   # (second looks take no place of their own)
+    tests, n_both = as_shown(cfg, tests, post)            # a close call walked once more: scored on both walks
+    matched, n_both_m = as_shown(cfg, matched, post)
+    stale = [w for w in pre if w["label"] == "u" and w.get("second_of") is None][-n_en:]
     bar = int(cfg["eval"]["bench_pass_bar"])
     L = []
     if not (eu and ev_ and tests):
@@ -410,7 +477,11 @@ def run_bench(cfg: dict, d: str, log=print) -> str:
                 "No run before the visitor's, so no stored pool. ")
              + f"Enrolment (after the break): first {n_en} U and first {n_en} V walks; tests: the {len(tests)} walks "
              f"after them; matched-pace walks after that: {len(matched)}. Only labelled walks count (learning walks by "
-             "their turn, game walks by an It was ... click).")
+             "their turn, game walks by an It was ... click)."
+             + (f" Second looks: a close call's walk once more takes no place of its own; {n_both} test walks"
+                + (f" and {n_both_m} matched-pace walks" if n_both_m else "")
+                + " were close calls walked once more, each scored on both walks averaged, as the round showed it."
+                if n_both or n_both_m else ""))
     L.append("")
     L.append("| pool | right (with tau) | forced | speed only | of |")
     L.append("|---|---|---|---|---|")
@@ -430,8 +501,18 @@ def run_bench(cfg: dict, d: str, log=print) -> str:
                  f"{bm['speed_only']} | {bm['n']} |")
         L.append(f"| (b) 3 + 3 (the older C3 round), shipped model {model.kind} | {b3['right']} | "
                  f"{b3['forced']} | {b3['speed_only']} | {b3['n']} |")
-        L.append(f"| (b) 2 + 2 (the app's round), shipped model {model.kind} | {b2['right']} | "
-                 f"{b2['forced']} | {b2['speed_only']} | {b2['n']} |")
+        nv = int(cfg["pools"]["n_enrol"])                  # the app's round: the visitor's n_enrol, Uzayr's own
+        nu = int(cfg["pools"].get("n_enrol_uzayr", nv))
+        if nu == nv == 2:                                  # (Uzayr walks as many as the visitor: as before)
+            L.append(f"| (b) 2 + 2 (the app's round), shipped model {model.kind} | {b2['right']} | "
+                     f"{b2['forced']} | {b2['speed_only']} | {b2['n']} |")
+        else:
+            if len(ev_) >= nv and len(eu) >= nu:           # (enough of his walks in the pool)
+                ba = _score(cfg, {"uzayr": eu[:nu], "visitor": ev_[:nv]}, tests, names, model=model)
+                L.append(f"| (b) {nv} + {nu} (the app's round: the friend's {nv}, Uzayr's {nu}), shipped model "
+                         f"{model.kind} | {ba['right']} | {ba['forced']} | {ba['speed_only']} | {ba['n']} |")
+            L.append(f"| (b) 2 + 2 (the older round), shipped model {model.kind} | {b2['right']} | "
+                     f"{b2['forced']} | {b2['speed_only']} | {b2['n']} |")
         if stale:
             am = _score(cfg, {"uzayr": stale, "visitor": ev_}, tests, names, model=model)
             L.append(f"| (a) stale, shipped model {model.kind} | {am['right']} | {am['forced']} | {am['speed_only']} | "
@@ -479,6 +560,13 @@ def run_bench(cfg: dict, d: str, log=print) -> str:
     if diffs:
         L.append(f"Offline equals live: largest difference between the recomputed and the live features "
                  f"{max(diffs):.3g} over {len(diffs)} values.")
+    sl = [x for _, ws in per_run for x in second_looks(cfg, ws, model)]
+    if sl:                                                 # (only recordings made with classifier.second_look)
+        truth = lambda x: "uzayr" if x["label"] == "u" else "visitor"  # noqa: E731
+        L.append("")
+        L.append(f"Second looks (a close call, then the same walker once more; labelled pairs): {len(sl)}. Answer "
+                 f"from both walks right {sum(x['both'] == truth(x) for x in sl)} of {len(sl)}; the close call "
+                 f"alone would have been right {sum(x['alone'] == truth(x) for x in sl)} of {len(sl)}.")
     out = os.path.join(openday.REPORTS, f"bench_{os.path.basename(os.path.normpath(d))}.md")
     with open(out, "w", encoding="utf-8") as f:
         f.write("\n".join(L) + "\n")
@@ -525,6 +613,9 @@ def print_run(rows: list[dict], info: dict, out: Callable = print) -> None:
         d = ", ".join(f"{x:.1f}" for x in info["disturbed"])
         out(f"room measured while someone moved (d {d}): its quiet part used")
     for rd in info.get("rounds", []):                      # (only runs recorded with the reuse print anything here)
+        if rd.get("seconds"):                              # (and with classifier.second_look)
+            out(f"player {rd['index']}: second looks (close call -> the walk after it): "
+                + ", ".join(f"{a} -> {b}" for b, a in rd["seconds"].items()))
         if rd["reused"]:
             out(f"player {rd['index']}: Uzayr's learning walks {', '.join(str(w) for w in rd['reused'])} reused "
                 f"from before")

@@ -76,7 +76,7 @@ def test_no_visitor_name_on_disk_after_replay_shipped(cfg_shipped, tmp_path):
     model and round: each visitor's learning walk first, then Uzayr's; the second visitor's round reuses Uzayr's
     walk (taken a minute before), so only the visitor walks."""
     cfg = cfg_shipped
-    cfg["pools"]["n_enrol"] = 1
+    cfg["pools"].update(n_enrol=1, n_enrol_uzayr=1)
     cfg["baseline"]["live_s"] = 3.0
     # gap_s 3.0 (was 1.5): a replay walk can now end "stopped" up to ~8 s after its click (walk.max_s 9), and the
     # second visitor's name must not be typed into a still-running walk
@@ -97,7 +97,7 @@ def test_no_visitor_name_on_disk_after_replay_shipped(cfg_shipped, tmp_path):
     out = sorted(f for f in os.listdir(openday.LOGS) if f.startswith("replay_two_visitors_c3_") and f.endswith(".json"))
     summ = json.load(open(os.path.join(openday.LOGS, out[-1])))
     assert summ["tally"]["right"] == summ["tally"]["wrong"] == summ["tally"]["not_sure"] == 0
-    dec = [w for w in summ["walks"] if w["decision"]]
+    dec = [w for w in summ["walks"] if w["decision"] and w.get("shown", True)]   # (the answers shown)
     assert summ["decisions"] == len(dec) == summ["decisions_right"] + summ["decisions_wrong"]
     for w in dec:
         assert w["scored"] == ("right" if w["decision"] == w["role"] else "wrong")
@@ -128,7 +128,7 @@ def test_a_refused_step_sends_the_replay_off_script(cfg_shipped, tmp_path, monke
     """A scripted step the app refuses (here Redo my walks pressed during a walk) sends the replay off script: it
     says so in its summary and returns 1, instead of carrying on silently."""
     cfg = cfg_shipped
-    cfg["pools"]["n_enrol"] = 1
+    cfg["pools"].update(n_enrol=1, n_enrol_uzayr=1)
     cfg["baseline"]["live_s"] = 3.0
     script = {"uzayr_standin": "P4", "baseline": {"name": "P4", "day": 1}, "seed": 4, "gap_s": 3.0,
               "steps": [{"action": "baseline"}, {"action": "new_visitor", "name": TYPED[0]},
@@ -185,7 +185,7 @@ def test_interleaved_enrolment_takes_turns_and_uses_fresh_walks(cfg_shipped, tmp
     are judged against Uzayr's fresh walks; the next player's round reuses them (memory only), and quitting wipes
     them."""
     cfg = cfg_shipped
-    cfg["pools"]["n_enrol"] = 2
+    cfg["pools"].update(n_enrol=2, n_enrol_uzayr=2)
     cfg["baseline"]["live_s"] = 3.0
     seen = {}
     orig = A.App.close
@@ -270,3 +270,36 @@ def test_replay_works_on_a_copy_of_the_config(cfg, monkeypatch):
     assert got["cfg"] is not cfg
     assert got["cfg"]["baseline"]["delay_s"] == 0.0 and got["cfg"]["walk"]["after_end_lock_s"] == 0.0
     assert cfg["baseline"]["delay_s"] > 0 and cfg["walk"]["after_end_lock_s"] > 0
+
+
+def test_a_replay_tallies_only_the_answers_shown():
+    """A close call answered from both walks never showed its own answer ("walk once more"): the replay leaves it out
+    of right / wrong and counts it apart (how its own answer would have scored); the answer from both walks counts,
+    scored against the script's walker of that second walk; a missed second look leaves the first walk's answer
+    shown, so that one counts. Without second looks the tally is as before."""
+    from openday import models
+    from openday.app import replay_rows, replay_tally
+
+    def dec(label, margin):
+        return models.Decision(label=label, margin=margin, not_sure=margin < 0.1, dist={}, contrib={})
+
+    def walk(i, d, seen=True, **kw):
+        return {"id": i, "purpose": "test", "seen": seen, "decision": d, "f": {"speed": 1.0} if seen else None,
+                "reason": "arrived", "active_s": 3.0, **kw}
+
+    truths = [{"role": r, "gt_speed": 1.0} for r in ("uzayr", "uzayr", "visitor", "visitor", "visitor", "uzayr")]
+    seen = [walk(1, dec("visitor", 0.04)),                                   # a close call (wrong on its own) ...
+            walk(2, dec("uzayr", 0.2), second_of=1, both=True),              # ... right from both walks
+            walk(3, dec("uzayr", 0.03)),                                     # a close call ...
+            walk(4, None, seen=False, second_of=3),                          # ... its second walk missed: it shows
+            walk(5, dec("visitor", 0.3)), walk(6, dec("visitor", 0.25))]
+    res = replay_rows(truths, seen)
+    assert [r.get("shown", True) for r in res] == [False, True, True, True, True, True]
+    assert [r["scored"] for r in res] == ["wrong", "right", "wrong", None, "right", "wrong"]
+    t = replay_tally(res)
+    assert (t["decisions"], t["decisions_right"], t["decisions_wrong"]) == (4, 2, 2)
+    assert t["second_looks"] == 2 and t["close_calls_walked_again"] == {"walks": 1, "right_alone": 0,
+                                                                         "wrong_alone": 1}
+    assert t["decisions_close_calls"] == 1                                    # (walk 3, shown: its own answer)
+    plain = replay_tally(replay_rows(truths[4:], seen[4:]))
+    assert plain == {"decisions": 2, "decisions_right": 1, "decisions_wrong": 1, "decisions_close_calls": 0}

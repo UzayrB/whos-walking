@@ -1,8 +1,11 @@
-# Three visitors in turn, the round of the day: New player, the visitor's two learning walks, then Uzayr's two
+# Three visitors in turn, the round of the day: New player, the visitor's two learning walks, then Uzayr's five
 # (first visitor only: his walks are kept and reused while under 25 minutes old), then the game. Before the third
-# visitor, Redo my walks (Ctrl+U) takes Uzayr's walks again during the second visitor's game. Walks are named by
-# participant code: P4 plays Uzayr; P3, P5 and P1 play the visitors, typed in as Lerato, Sipho and Ayesha. Each
-# step plays a random unused S pass (towards the boards). A plumbing test (the model was trained on these people).
+# visitor, Redo my walks (Ctrl+U) takes Uzayr's five walks again during the second visitor's game (day 2: its five
+# passes; the last game walk is a day 1 pass). Lerato's last game walk and Ayesha's first are close calls (with the
+# shipped model), so with classifier.second_look the same person walks once more and the answer comes from both
+# walks (with it off, each of those walks is a game walk of its own). Walks are named by participant code: P4 plays
+# Uzayr; P3, P5 and P1 play the visitors, typed in as Lerato, Sipho and Ayesha. Each step plays a random unused S
+# pass (towards the boards). A plumbing test (the model was trained on these people).
 uzayr_standin: P4
 baseline: {name: P4, day: 1}
 seed: 11
@@ -14,8 +17,12 @@ steps:
   - {walk: P3, day: 1, block: natural}
   - {walk: P4, day: 1, block: natural}
   - {walk: P4, day: 1, block: natural}
+  - {walk: P4, day: 1, block: natural}
+  - {walk: P4, day: 1, block: natural}
+  - {walk: P4, day: 1, block: natural}
   - {walk: P3, day: 1, block: natural}
   - {walk: P4, day: 1, block: natural}
+  - {walk: P4, day: 1, block: natural}           # (the walk before is a close call: P4 walks once more)
   - {action: new_visitor, name: Sipho}
   - {walk: P5, day: 1, block: natural}
   - {walk: P5, day: 1, block: natural}
@@ -24,8 +31,12 @@ steps:
   - {action: enrol_uzayr}
   - {walk: P4, day: 2, block: natural}
   - {walk: P4, day: 2, block: natural}
+  - {walk: P4, day: 2, block: natural}
+  - {walk: P4, day: 2, block: natural}
+  - {walk: P4, day: 2, block: natural}
   - {action: new_visitor, name: Ayesha}
   - {walk: P1, day: 2, block: natural}
   - {walk: P1, day: 2, block: natural}
   - {walk: P1, day: 2, block: natural}
-  - {walk: P4, day: 2, block: natural}
+  - {walk: P1, day: 2, block: natural}           # (the walk before is a close call: P1 walks once more)
+  - {walk: P4, day: 1, block: natural}

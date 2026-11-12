@@ -25,6 +25,23 @@ the current room measurement, in this app run), so most rounds need only the vis
 takes his again at any time between walks (Undo walk, or Ctrl+U again, keeps the old ones until his first new walk
 counts). New player and End game wipe the visitor only; Quit wipes everything.
 
+Uzayr walks pools.n_enrol_uzayr learning walks (5; his are kept for the next players), the visitor pools.n_enrol (2).
+
+The second look (classifier.second_look): a game walk that is a close call (its margin below the model's tau) names
+nobody yet. After Thinking ... the card says "Walk once more!" ("Too close to call: the same walker again.", state
+AGAIN), the same walker walks once more, and the answer is decided on both walks, their readings averaged
+(models.average_walks; the tiles show those averaged readings, "Both walks"), and says "(from both walks)", How sure
+from the model's two-walk curve (Model.how_sure_both: cal2_m / cal2_p, fitted separately after training and added to
+the model file, laptop only; the one-walk curve when the file has none, logged once at start). At most one extra walk
+per game walk; a missed second walk leaves the first walk's own answer. The close call waits for its second walk
+(look2) only on "walk once more" (and its own Thinking step): a second look starts from nowhere else. Every way off
+that card comes back to it (Cancel walk or a lost signal during the second walk, Measure room whether it works or
+not, a lost signal or a receiver restart, New player then Cancel, the End game and Quit boxes' Keep going: _resting
+rests in AGAIN while the close call waits), or drops the close call with the player (Undo walk: "Last walk removed.",
+back to the game, nobody named; End game, a new player, Quit). Undo walk on the answer from both walks throws both
+away. A recording links the second walk to the first ("second_of" in its walk event), and an It was ... click labels
+both.
+
 Labels: a learning walk is labelled by its turn (Undo walk redoes a wrong turn) and joins that person's pool; those
 walks are the pools for the whole game. A game walk never joins a pool and nothing is tallied. On the day there are
 no It was ... buttons (U / V do nothing). Only in a test recording (--record) It was Uzayr / It was {V} show on an
@@ -56,6 +73,7 @@ from openday import chain, models, recordings, screen, walks
 NEEDS_BASELINE, BUSY, IDLE, NAME_ENTRY = "NEEDS_BASELINE", "BUSY", "IDLE", "NAME_ENTRY"
 ENROL_VISITOR, ENROL_UZAYR, READY, WALKING = "ENROL_VISITOR", "ENROL_UZAYR", "READY", "WALKING"
 DECIDING, RESULT = "DECIDING", "RESULT"
+AGAIN = "AGAIN"                                            # a close call: the same walker walks once more (second look)
 # (short labels, so "like {V}" has room beside them in the narrow tiles: on the MacBook "like Lerato" keeps about
 # 0.9 of its size, an 8-letter name about two-thirds, 9 letters 0.6; the steps value says "/min")
 TILE = {"speed": ("Speed", "{:.2f} m/s"), "steps": ("Steps", "{:.0f} /min"), "swing": ("Swing", "{:.1f}x"),
@@ -111,7 +129,11 @@ class App:
         self.baseline_path = os.path.join(state_dir, "baseline_live.json") if baseline_cache else None
         self.visitor = models.Pool(cfg["pools"]["n_visitor"])             # memory only, never written
         self.tally = models.Tally(os.path.join(state_dir, "tally.json"))
-        self.uz_fresh = models.Pool(cfg["pools"]["n_uzayr"])  # Uzayr's learning walks, memory only
+        n_v = int(cfg["pools"]["n_enrol"])                 # learning walks: the visitor's, and Uzayr's own (the same
+        self.n_enrol = {"visitor": n_v, "uzayr": int(cfg["pools"].get("n_enrol_uzayr", n_v))}   # when not set)
+        self.uz_fresh = models.Pool(max(int(cfg["pools"]["n_uzayr"]), self.n_enrol["uzayr"]))   # his, memory only
+        self.second_look = bool(cfg["classifier"].get("second_look", False))   # a close call: walk once more
+        self.look2: Optional[dict] = None                  # the close call waiting for its second walk (state AGAIN)
         self.order = str(cfg["pools"].get("enrol_order", "visitor_first")).lower()
         if self.order not in ("visitor_first", "alternate"):
             raise ValueError(f"pools.enrol_order must be visitor_first or alternate, not {self.order!r}")
@@ -121,6 +143,9 @@ class App:
         self.uz_redo = False                               # Redo my walks was clicked in this player's game
         self.uz_held: Optional[dict] = None                # Redo my walks: his old walks (memory) till a new one
         self.model = models.load_model(cfg, self.log)       # m1 / m2 (thesis data only); None = m0
+        if self.second_look and self.model is not None and self.model.cal2_m is None:
+            self.log("second look: the model has no two-walk How sure curve (cal2_m / cal2_p, fitted separately "
+                     "after training): an answer from both walks reads the one-walk curve")
         self.name: Optional[str] = None                                   # the visitor's name: memory only
         self.vidx: Optional[int] = None
         self.visitor_ready = False
@@ -377,7 +402,8 @@ class App:
             if st == WALKING:
                 self._hint("Finish or cancel the walk first.")
             else:
-                self.prev, self.state, self.typed = self._resting(), NAME_ENTRY, ""
+                self.prev, self.state, self.typed = self._resting(), NAME_ENTRY, ""   # (Cancel: back; on a close
+                                                                                       # call "walk once more")
         elif self._is(key, "wipe_visitor"):                # End game: asks first, like Quit
             if self.name is None:
                 self._hint("No player to end.")
@@ -459,17 +485,17 @@ class App:
         """Whose learning walk is next, None when both are done. Redo my walks: Uzayr's. pools.enrol_order
         visitor_first: the visitor's n_enrol walks, then Uzayr's (none when his are reused); alternate: Uzayr first,
         then taking turns."""
-        n = int(self.cfg["pools"]["n_enrol"])
+        nu, nv = self.n_enrol["uzayr"], self.n_enrol["visitor"]
         u, v = self.done["uzayr"], self.done["visitor"]
-        if self.uz_enrolling and u < n:
+        if self.uz_enrolling and u < nu:
             return "uzayr"
         if self.order == "visitor_first":
-            return "visitor" if v < n else ("uzayr" if u < n else None)
-        if u < n and u <= v:
+            return "visitor" if v < nv else ("uzayr" if u < nu else None)
+        if u < nu and u <= v:
             return "uzayr"
-        if v < n:
+        if v < nv:
             return "visitor"
-        return "uzayr" if u < n else None
+        return "uzayr" if u < nu else None
 
     # -- Uzayr's learning walks, kept across players while fresh ------------------------------------
     def _keep_uzayr(self) -> bool:
@@ -483,7 +509,7 @@ class App:
     def _uz_age(self) -> Optional[float]:
         """Minutes since Uzayr's whole set of learning walks was taken (its oldest walk); None when he has no whole
         set, or it was taken before the current room measurement (Measure room / Use last measurement)."""
-        n = int(self.cfg["pools"]["n_enrol"])
+        n = self.n_enrol["uzayr"]
         ws = self.uz_fresh.walks
         if self.done["uzayr"] < n or len(ws) < n:
             return None
@@ -511,7 +537,7 @@ class App:
             return ""
         age = self._uz_age()
         if age is None:
-            n = int(self.cfg["pools"]["n_enrol"])
+            n = self.n_enrol["uzayr"]
             return "  your walks: " + ("none" if self.done["uzayr"] < n else "room measured since")
         return f"  your walks {age:.1f} min (reused under {self.reuse_min:g})"
 
@@ -531,7 +557,7 @@ class App:
         if self._can_unredo():                             # Ctrl+U again before his first new walk: keep the old
             return self._keep_old_walks()
         if st not in (IDLE, READY, RESULT):
-            if st in (WALKING, DECIDING, ENROL_VISITOR, ENROL_UZAYR):
+            if st in (WALKING, DECIDING, ENROL_VISITOR, ENROL_UZAYR, AGAIN):
                 self._hint("Not now: finish this step first.")
             return
         if self._silent(time.monotonic()):                 # his walks could not be taken now
@@ -557,12 +583,11 @@ class App:
         """Undo walk (or Ctrl+U again) right after Redo my walks: his old walks back (from memory), the game or
         IDLE as before. The recording writes uzayr_kept with their walk ids (bench_rounds)."""
         held, self.uz_held = self.uz_held, None
-        n = int(self.cfg["pools"]["n_enrol"])
         self.uz_fresh.walks = held["walks"]
         self.done["uzayr"] = held["done"]
         self.uz_enrolling = False
         self.uz_reused, self.uz_redo = held["reused"] and self.name is not None, held["redo"] and self.name is not None
-        self.visitor_ready = self.name is not None and self.done["visitor"] >= n and self.done["uzayr"] >= n
+        self.visitor_ready = self._both_learnt()
         self.state = self._resting()
         self.log("uzayr redo undone: old walks kept")
         self._event("uzayr_kept", index=self.vidx, t_mono=time.monotonic(),
@@ -579,15 +604,32 @@ class App:
         return models.decide(self.model, f, {"uzayr": [w["f"] for w in self.uz_fresh.walks],
                                              "visitor": [w["f"] for w in self.visitor.walks]})
 
+    def _both_learnt(self) -> bool:
+        """A player, and both people have walked all their learning walks: the game can start."""
+        return self.name is not None and self.done["visitor"] >= self.n_enrol["visitor"] \
+            and self.done["uzayr"] >= self.n_enrol["uzayr"]
+
     def _resting(self) -> str:
         """The state to rest in when nothing is happening."""
         if self.chain.baseline is None:
             return NEEDS_BASELINE
-        if self.uz_enrolling and self.done["uzayr"] < int(self.cfg["pools"]["n_enrol"]):
+        if self.uz_enrolling and self.done["uzayr"] < self.n_enrol["uzayr"]:
             return ENROL_UZAYR
         if self.name is not None and not self.visitor_ready:
             return ENROL_VISITOR
+        if self._close_call_waits():                       # a close call still waiting for its second walk: every
+            return AGAIN                                   # way back (Measure room, a lost signal, a box) comes here
         return READY if (self.visitor_ready and len(self.uz_fresh)) else IDLE
+
+    def _close_call_waits(self) -> bool:
+        """A close call is waiting for its second walk (the second look): it is the last walk and the game is on."""
+        return self.look2 is not None and self.look2 is self.last and self.visitor_ready and len(self.uz_fresh) > 0
+
+    def _drop_close_call(self, why: str) -> None:
+        """The close call can no longer get its second walk: it goes (nobody was named for it), logged."""
+        if self.look2 is not None:
+            self.log(f"walk {self.look2['id']} close call dropped: {why}")
+            self.look2 = None
 
     def start_baseline(self, t: float) -> None:
         """Measure the room, after a countdown of baseline.delay_s (time to step back from the boards); the event
@@ -643,9 +685,8 @@ class App:
         self.chain.baseline = b
         self.room_at = time.time()                         # Uzayr's walks from before this are no longer reused
         self.uz_held = None                                # (old walks set aside by Redo my walks: stale now)
-        n = int(self.cfg["pools"]["n_enrol"])
         if self._keep_uzayr() and len(self.uz_fresh) and (
-                (self.uz_reused and not self.visitor_ready) or self.done["uzayr"] < n):
+                (self.uz_reused and not self.visitor_ready) or self.done["uzayr"] < self.n_enrol["uzayr"]):
             # still learning on reused walks, or half a set (his turns, or Redo my walks): he walks his whole set
             # again after this measurement, so it can be reused; a game already under way keeps its pools. The
             # bench tools rebuild the pools from uzayr_dropped.
@@ -712,6 +753,7 @@ class App:
         self.visitor.clear()
         self.name, self.vidx, self.visitor_ready, self.typed = None, None, False, ""
         self.misses = 0                                    # "Missed twice" belonged to the last player
+        self._drop_close_call("the player was wiped")      # (a close call waiting for its second walk too)
         self.end_until = 0.0
         self.done["visitor"] = 0
         self.uz_reused = self.uz_redo = False
@@ -757,10 +799,22 @@ class App:
         if sw is not None:
             sw.add(pre)
         self.n_walks += 1
-        self.walk = {"w": w, "screen": sw, "purpose": purpose, "t_click": t, "t_dev": t_dev, "from": self.state,
-                     "id": self.n_walks}
-        self.prev, self.state = self._resting() if self.state in (RESULT, DECIDING) else self.state, WALKING
-        self.log(f"walk {self.walk['id']} start {purpose}")
+        # the second look at a waiting close call: only from "walk once more" (AGAIN) or its own Thinking step (a
+        # replay has no after-walk lock); from anywhere else a game walk is a new one and the close call goes
+        waiting = self._close_call_waits() and self.state in (AGAIN, DECIDING)
+        first = self.look2 if purpose == "test" and waiting else None
+        if self.look2 is not None and first is None:
+            self._drop_close_call(f"walk {self.n_walks} started from {self.state}")
+        self.walk = {"w": w, "screen": sw, "purpose": purpose, "t_click": t, "t_dev": t_dev,
+                     "from": AGAIN if first is not None else self.state, "id": self.n_walks}
+        if first is not None:                              # (Cancel walk, or a lost signal, goes back to AGAIN)
+            self.walk["second_of"] = first["id"]
+            back = AGAIN
+        else:
+            back = self._resting() if self.state in (RESULT, DECIDING) else self.state
+        self.prev, self.state = back, WALKING
+        self.log(f"walk {self.walk['id']} start {purpose}"
+                 + (f" (second look at walk {first['id']})" if first is not None else ""))
         self.notice = None                                 # starting a walk clears any notice
         if self.hint_ev is not None and self.hint_ev[1] != "red":
             self.hint_ev = None
@@ -822,8 +876,19 @@ class App:
                "label": None, "decision": None, "pool": None, "entry": None,
                "active_s": w.active_s, "t_end_dev": w.t_end_col, "t_end": rel(w.t_end_col),
                "t_arrive": rel(w.t_arrive), "screen_t_end": None}
+        first = self.look2 if self.look2 is not None and wk.get("second_of") == self.look2["id"] else None
+        if first is not None:
+            rec["second_of"] = first["id"]                 # (also when it was missed: the first walk then decides)
         if f is not None and wk["purpose"] == "test":      # (the pools can't change while a walk is on screen)
-            rec["decision"] = self._decide(f)
+            if first is not None:                          # the second look: decided on both walks, averaged
+                rec["alone"] = self._decide(f)             # (this walk on its own: the log and the events only)
+                rec["f_both"] = models.average_walks([first["f"], f])   # (what it was decided on: the tiles)
+                rec["decision"], rec["both"], rec["first"] = self._decide(rec["f_both"]), True, first
+            else:
+                rec["decision"] = self._decide(f)
+                d = rec["decision"]
+                if self.second_look and d is not None and d.not_sure:
+                    rec["again"] = True                    # too close to call: the same walker walks once more
         wk["rec"] = rec
         wk["end_dev"] = w.t_end_col if w.t_end_col is not None else (w.t[-1] if w.t else wk["t_dev"])  # model's end
         wk["ended_at"] = time.monotonic()                  # (host time: _timers shows it if the columns stop coming)
@@ -852,8 +917,15 @@ class App:
             self.misses += 1
             same = " Same turn again: start from the back mark." \
                 if self.state in (ENROL_VISITOR, ENROL_UZAYR) else " Walk again from the back mark."
+            alone = rec.get("second_of") is not None and self.look2 is not None \
+                and self.look2["id"] == rec["second_of"]
+            if alone:                                      # the second look was missed: the first walk decides alone
+                self.look2 = None
+                self.state, self.timer = DECIDING, time.monotonic() + float(self.cfg["ui"]["reading_s"])
+                same = " The answer is from the first walk."
             self._notice("Missed that one." + same, "amber", 4.0)
-            self.log(f"walk {rec['id']} not seen, ended {rec['reason']} ({rec['active_s']:.1f} s active)")
+            self.log(f"walk {rec['id']} not seen, ended {rec['reason']} ({rec['active_s']:.1f} s active)"
+                     + (f": walk {rec['second_of']} decides alone" if alone else ""))
             self._event("walk", **self._walk_event(rec))
             return
         self._retire(self.last)
@@ -873,6 +945,7 @@ class App:
             self.state = self._resting()
         elif p == "test":                                  # (its answer was made when the model's window ended)
             self.state, self.timer = DECIDING, time.monotonic() + float(self.cfg["ui"]["reading_s"])
+            self.look2 = rec if rec.get("again") else None  # a close call: AGAIN after Thinking (_timers)
         d = rec["decision"]
         at = f" at {rec['t_end']:.1f} s" if rec["t_end"] is not None else ""
         arr_at = f", arrived {rec['t_arrive']:.1f} s" if rec["t_arrive"] is not None else ""
@@ -880,7 +953,10 @@ class App:
         ended = f" ended {rec['reason']}{at} ({rec['active_s']:.1f} s active{arr_at}{shown})"
         self.log(f"walk {rec['id']} {p} seen{ended}" + (self._feat_text(f) if self.keep_log else "")
                  + (f" -> {d.label} margin {d.margin:.3f}{' not sure' if d.not_sure else ''} speed-only "
-                    f"{d.speed_only.label if d.speed_only else '-'}" if d else ""))
+                    f"{d.speed_only.label if d.speed_only else '-'}" if d else "")
+                 + (": too close to call, walk once more" if rec.get("again") else "")
+                 + (f" (from both walks {rec['second_of']} and {rec['id']}; this walk alone {rec['alone'].label} "
+                    f"margin {rec['alone'].margin:.3f})" if rec.get("both") and rec.get("alone") else ""))
         self._event("walk", **self._walk_event(rec))
         if rec["final"]:                                   # the same label event an It was ... click writes
             self._event("label", walk_id=rec["id"], label=rec["label"], t_mono=time.monotonic(), counted=None,
@@ -902,14 +978,15 @@ class App:
         counts for whose turn it was. Uzayr's first new walk after Redo my walks lets go of his old ones (uz_held);
         his whole set ends a Redo; Undo walk on his walk with no player, or in a Redo, brings his turn back (the
         card: "Uzayr walks once more, then ..."). The notices say what comes next (pools.enrol_order visitor_first,
-        and Redo): "Got it! Once more." between one person's walks, "Got it! Now Uzayr walks twice." at the
-        hand-over; when the game starts "Got you both!" after both walked, "Got it!" when his walks were reused (or
-        redone in the game). The alternating order keeps a plain "Got it!" (the next turn is the other person's)."""
+        and Redo): "Got it! Once more." (or "Got it! 4 more walks.") between one person's walks, "Got it! Now
+        Uzayr walks 5 times." (pools.n_enrol_uzayr) at the hand-over; when the game starts "Got you both!" after
+        both walked, "Got it!" when his walks were reused (or redone in the game). The alternating order keeps a
+        plain "Got it!" (the next turn is the other person's)."""
         if not rec["purpose"].startswith("enrol") or bool(rec.get("enrol_counted")) == (step > 0):
             return
         rec["enrol_counted"] = step > 0
-        n = int(self.cfg["pools"]["n_enrol"])
         who = "uzayr" if rec["purpose"] == "enrol_uzayr" else "visitor"
+        n = self.n_enrol[who]
         if who == "visitor" and self.name is None:
             return
         self.done[who] = max(0, self.done[who] + step)
@@ -920,7 +997,7 @@ class App:
             if left > 0:
                 self._notice("Got it! " + ("Once more." if left == 1 else f"{left} more walks."), "green", 2.0)
             elif who == "visitor" and self._turn() == "uzayr":
-                self._notice(f"Got it! Now Uzayr walks {_times(n)}.", "green", 3.0)
+                self._notice(f"Got it! Now Uzayr walks {_times(self.n_enrol['uzayr'])}.", "green", 3.0)
         if who == "uzayr":
             if self.done["uzayr"] >= n and self.uz_enrolling:
                 self.uz_enrolling = False                  # Redo my walks: done
@@ -931,7 +1008,7 @@ class App:
         if self.name is None:
             return
         was = self.visitor_ready
-        self.visitor_ready = self.done["visitor"] >= n and self.done["uzayr"] >= n
+        self.visitor_ready = self._both_learnt()
         if self.visitor_ready and not was and step > 0:
             if who == "uzayr" and self.uz_redo:
                 text = "Got it! Back to the game."
@@ -950,16 +1027,26 @@ class App:
         if d is not None:
             out["decision"] = {"label": d.label, "margin": d.margin, "not_sure": d.not_sure,
                                "speed_only": d.speed_only.label if d.speed_only else None}
+        if rec.get("again"):                               # the second look (only with classifier.second_look):
+            out["second_look"] = True                      # this close call asked for one more walk ...
+        if rec.get("second_of") is not None:               # ... and this walk was it: its decision is from both
+            out["second_of"] = rec["second_of"]            # walks (bench.second_looks rebuilds it)
+            if d is not None:
+                out["decision"]["both"] = True
+            a = rec.get("alone")
+            if a is not None:
+                out["alone"] = {"label": a.label, "margin": a.margin, "not_sure": a.not_sure}
         return out
 
     def discard(self) -> None:
         if self.state == WALKING and self.walk is not None:
             self.log(f"walk {self.walk['id']} discarded while walking")
             self._event("discard", walk_id=self.walk["id"], t_mono=time.monotonic())
-            back = self.walk["from"]
+            back = self.walk["from"]                       # (the second look: back to "walk once more")
             self.state, self.walk = back if back not in (RESULT, DECIDING) else self._resting(), None
             self.last_end_wall = time.monotonic()
-            again = " Same turn again." if self.state in (ENROL_VISITOR, ENROL_UZAYR) else ""
+            again = " Same turn again." if self.state in (ENROL_VISITOR, ENROL_UZAYR) else \
+                (" Same walker again." if self.state == AGAIN else "")
             self._notice("Walk cancelled." + again, "amber", 2.5)
             return
         rec = self.last
@@ -970,11 +1057,16 @@ class App:
         self._unapply(rec)
         self._enrol_count(rec, -1)
         self.last = None
+        self._drop_close_call("Undo walk")                 # (on "walk once more": the close call goes)
         self.state = self._resting()
         self._event("discard", walk_id=rec["id"], t_mono=time.monotonic())
         self.log(f"walk {rec['id']} discarded")
+        first = rec.get("first") if rec.get("both") else None
+        if first is not None:                              # an answer from both walks: both go
+            self._event("discard", walk_id=first["id"], t_mono=time.monotonic())
+            self.log(f"walk {first['id']} discarded (the first of the two)")
         again = " Same turn again." if self.state in (ENROL_VISITOR, ENROL_UZAYR) else ""
-        self._notice("Last walk removed." + again, "amber", 2.5)
+        self._notice(("Both walks removed." if first is not None else "Last walk removed.") + again, "amber", 2.5)
 
     def _unapply(self, rec: dict) -> None:
         if rec.get("entry") is not None:
@@ -987,8 +1079,9 @@ class App:
         rec = self.last
         if self.events is None or rec is None or not rec["seen"]:
             return None
-        if not self.walk_log or self.walk_log[-1] is not rec:   # a missed walk came after it: not this answer's
-            return None
+        tail = self.walk_log[-1] if self.walk_log else None     # a missed walk came after it: not this answer's
+        if tail is not rec and not (tail is not None and not tail["seen"] and tail.get("second_of") == rec["id"]):
+            return None                                    # (unless it was its missed second look)
         if (st == RESULT and rec["decision"] is not None) or (st == IDLE and self.name is None
                                                               and rec["purpose"] == "free"):
             return rec
@@ -1018,14 +1111,20 @@ class App:
             counted = "right" if d.label == truth else "wrong"
         self._event("label", walk_id=rec["id"], label=who, t_mono=time.monotonic(), counted=counted)
         self.log(f"walk {rec['id']} labelled {truth} {counted or ''}")
+        first = rec.get("first") if rec.get("both") else None
+        if first is not None:                              # an answer from both walks: the same walker walked both
+            first["final"], first["label"] = True, who
+            self._event("label", walk_id=first["id"], label=who, t_mono=time.monotonic(), counted=None,
+                        both_with=rec["id"])
+            self.log(f"walk {first['id']} labelled {truth} (with walk {rec['id']})")
         against = d is not None and d.label != truth
         self._notice(f"Thanks: that was {'Uzayr' if who == 'u' else self.name}.",
                      screen.INK2 if against else "green", 2.5)  # a label against the answer: thanks, but not in green
 
     # -- timers and health ----------------------------------------------------------------------
     def _timers(self, now: float) -> None:
-        if self.state == DECIDING and now >= self.timer:
-            self.state = RESULT
+        if self.state == DECIDING and now >= self.timer:   # a close call waiting: "walk once more", else the answer
+            self.state = AGAIN if self._close_call_waits() else RESULT
         if self.capture is not None:
             newest = max((c.t[-1] for c in self.capture["cols"] if len(c)), default=-np.inf)
             if newest >= self.capture["t1"]:
@@ -1056,12 +1155,18 @@ class App:
             self.rate_hist.popleft()
 
     def _repair(self) -> None:
-        """A state that has lost what it shows goes back to resting (never stuck on a dead screen)."""
+        """A state that has lost what it shows goes back to resting (never stuck on a dead screen). "Walk once more"
+        without its waiting close call drops it and says so."""
         st = self.state
+        lost = st == AGAIN and not self._close_call_waits()
         if (st == WALKING and self.walk is None) or (st == BUSY and self.capture is None) \
-                or (st in (DECIDING, RESULT) and (self.last is None or self.last.get("decision") is None)):
+                or (st in (DECIDING, RESULT) and (self.last is None or self.last.get("decision") is None)) or lost:
+            if lost:
+                self._drop_close_call("its walk is gone")
             self.state = self._resting()
             self.log(f"state repaired: {st} -> {self.state}")
+            if lost:
+                self._notice("Walk again from the back mark.", "amber", 4.0)
 
     def rate(self) -> float:
         if len(self.rate_hist) < 2:
@@ -1147,13 +1252,14 @@ class App:
                 self.fps = min(float(u["fps_max"]), self.fps + 1)
                 self.last_fps_adj = now
 
-    def _tile_bars(self, name: str, this: Optional[float]) -> list:
-        """The last walk, Uzayr's average and the visitor's, as (short label, value text, bar fraction)."""
+    def _tile_bars(self, name: str, this: Optional[float], first: str = "Last walk") -> list:
+        """The last walk (first: its row's name; "Both walks" for an answer from both walks), Uzayr's average and
+        the visitor's, as (short label, value text, bar fraction)."""
         lo, hi = self.cfg["ui"]["tile_ranges"][name]
         frac = lambda v: None if v is None or not np.isfinite(v) else (min(max(v, lo), hi) - lo) / (hi - lo)  # noqa: E731
         fmt = TILE[name][1].split(" ")[0]
         show = lambda v: "-" if v is None or not np.isfinite(v) else fmt.format(v * 100 if name == "bounce" else v)  # noqa: E731
-        bars = [("Last walk", show(this), frac(this))]
+        bars = [(first, show(this), frac(this))]
         if self.name is None:                              # nobody to compare with yet
             return bars
         u = self.uz_fresh.means(self.names)[name] if len(self.uz_fresh) else None
@@ -1213,8 +1319,11 @@ class App:
             self._ridge_fault(exc)
         # tiles
         rec = self.last
-        f = rec["f"] if rec is not None and st in (DECIDING, RESULT, READY, IDLE, ENROL_UZAYR, ENROL_VISITOR) \
+        f = rec["f"] if rec is not None and st in (DECIDING, RESULT, READY, IDLE, ENROL_UZAYR, ENROL_VISITOR, AGAIN) \
             and rec["seen"] else None
+        both = f is not None and rec.get("f_both") is not None   # an answer from both walks: the readings it was
+        if both:                                                  # decided on (both walks averaged), "Both walks"
+            f = rec["f_both"]
         tiles = {}
         for n in self.names:
             label, fmt = TILE[n]
@@ -1228,7 +1337,7 @@ class App:
                 continue
             this = f[n] if f else None
             val = "-" if this is None or not np.isfinite(this) else fmt.format(this * 100 if n == "bounce" else this)
-            t = {"label": label, "value": val, "bars": self._tile_bars(n, this)}
+            t = {"label": label, "value": val, "bars": self._tile_bars(n, this, "Both walks" if both else "Last walk")}
             if rec is not None and f:                      # a learning walk's bar in the colour of whose turn it was
                 t["this_color"] = ({"u": screen.UZAYR, "v": screen.VISITOR}.get(rec.get("label"), screen.THIS)
                                    if rec["purpose"].startswith("enrol")
@@ -1290,6 +1399,7 @@ class App:
             DECIDING: "",
             RESULT: "Click Next walk as they set off." + self._uz_note(),
             READY: "One of them walks: click Start walk as they set off.",
+            AGAIN: "The same walker again: click Start walk as they set off.",
         }.get(st, "")
         return text, screen.INK2
 
@@ -1413,26 +1523,39 @@ class App:
             turn = "uzayr" if st == ENROL_UZAYR else (self._turn() or "visitor")
             who = "Uzayr" if turn == "uzayr" else self._vname(BIG_NAME)
             sub = "Stand on the back mark. Walk to the X, then stand still."
+            nu = self.n_enrol["uzayr"]
+            if turn == "uzayr" and nu != self.n_enrol["visitor"]:   # (his count differs: which walk of his this is)
+                sub = f"Walk {min(self.done['uzayr'] + 1, nu)} of {nu}: to the X, then stand still."
             if st == ENROL_UZAYR:                          # Redo my walks: say what happens after his walks
-                n, k = int(self.cfg["pools"]["n_enrol"]), self.done["uzayr"]
-                left = f"Uzayr walks {_times(max(1, n - k))}" + (" more" if k else "")
-                sub = left + (", then the game carries on." if self.name is not None
-                              else ", then on to the next player.")
+                k = self.done["uzayr"]
+                left = max(1, nu - k)                      # ("Uzayr walks 4 more times", "twice more", "once more")
+                words = f"Uzayr walks {_times(left)}" if not k else (
+                    f"Uzayr walks {left} more times" if left > 2 else f"Uzayr walks {_times(left)} more")
+                sub = words + (", then the game carries on." if self.name is not None
+                               else ", then on to the next player.")
             out = {"big": f"{who}'s turn", "big_color": screen.UZAYR if turn == "uzayr" else screen.VISITOR,
                    "sub": sub, "dots": self._dots()}
-        elif st == DECIDING:
-            out = {"big": "Thinking \u2026", "sub": f"Comparing this walk with Uzayr's and {nm}'s"}
+        elif st == DECIDING:                               # (after a second look: both walks, averaged)
+            walk = "both walks" if self.last is not None and self.last.get("both") else "this walk"
+            out = {"big": "Thinking \u2026", "sub": f"Comparing {walk} with Uzayr's and {nm}'s"}
+        elif st == AGAIN:                                  # a close call: nobody named yet, the action is the headline
+            out = {"big": "Walk once more!", "sub": "Too close to call: the same walker again."}
         elif st == RESULT and self.last is not None and self.last["decision"] is not None:
             d = self.last["decision"]                      # (the nearer person, however close)
+            both = bool(self.last.get("both"))             # (the second look: decided on both walks)
             who = "Uzayr" if d.label == "uzayr" else self._vname(BIG_NAME)
             why = d.why or models.why(d.contrib, d.label)
             colour = screen.UZAYR if d.label == "uzayr" else screen.VISITOR
-            p = self.model.how_sure(d.margin) if self.model is not None else None
+            p = None
+            if self.model is not None:                     # from both walks: the model's two-walk curve
+                p = self.model.how_sure_both(d.margin) if both else self.model.how_sure(d.margin)
             conf = p if p is not None else d.margin
             # (no line under the name: the screen draws it bigger; Next walk is the operator's)
             out = {"big": who, "big_color": colour, "conf": conf,
                    "conf_text": f"How sure: {100 * conf:.0f}%", "conf_color": colour,
                    "why": ("Told apart by: " + _words(why[:2])) if why else ""}
+            if both:                                       # (a line under the name: drawn at the smaller size)
+                out["sub"] = "(from both walks)"
         elif st == READY:
             out = {"big": "Who's walking?",
                    "sub": f"Uzayr or {nm}: one of you walks to the X. The Wi-Fi guesses who."}
@@ -1448,8 +1571,8 @@ class App:
     def _dots(self) -> dict:
         """The learning walks as two rows of dots, in the order they are walked (pools.enrol_order visitor_first:
         the visitor's row on top; alternate: Uzayr's): done / now / next, no letters. Uzayr's row is all done when
-        his walks are reused; with no player (Redo my walks) only his row."""
-        n = int(self.cfg["pools"]["n_enrol"])
+        his walks are reused; with no player (Redo my walks) only his row. Each row has that person's learning walks
+        (pools.n_enrol_uzayr for Uzayr), at most 5 dots."""
         turn = self._turn()
         walking = self.walk is not None and self.walk["purpose"].startswith("enrol")
         if walking:                                        # the turn being walked is the "now" dot
@@ -1463,7 +1586,7 @@ class App:
                 continue
             done = self.done[who]
             rows.append((name, colour, ["done" if j < done else ("now" if who == turn and j == done else "next")
-                                        for j in range(min(n, 3))]))
+                                        for j in range(min(self.n_enrol[who], screen.DOTS_MAX))]))
         return {"rows": rows}
 
     def _smooth_line(self, y: np.ndarray) -> np.ndarray:
@@ -1642,6 +1765,46 @@ def run_live(cfg: dict, port: Optional[str], identify: bool, reset: bool, record
     return 0 if st is not None and st.opened else 1
 
 
+def replay_rows(truths: list[dict], seen: list[dict]) -> list[dict]:
+    """A replay's walks, one row each: the app's walk records (walk_log) beside the script's truth (who walked),
+    each answer scored against that walker (the app tallies nothing, and a replay clicks no It was ...). A close
+    call answered from both walks (classifier.second_look) never showed its own answer (only "walk once more"): its
+    row says "shown": False (a missed second look shows the first walk's answer: that one is shown)."""
+    rnd = lambda x: round(x, 2) if x is not None else None  # noqa: E731
+    unshown = {w["second_of"] for w in seen if w.get("both")}
+    res = []
+    for truth, w in zip(truths, seen):
+        d = w.get("decision")
+        res.append({"role": truth["role"], "purpose": w["purpose"], "seen": w["seen"],
+                    "decision": d.label if d else None, "margin": round(d.margin, 3) if d else None,
+                    "not_sure": d.not_sure if d else None, "speed": round(w["f"]["speed"], 2) if w["f"] else None,
+                    "gt_speed": round(truth["gt_speed"], 2),
+                    "scored": None if d is None else ("right" if d.label == truth["role"] else "wrong"),
+                    "reason": w["reason"], "active_s": round(w["active_s"], 2), "t_end": rnd(w.get("t_end")),
+                    "t_arrive": rnd(w.get("t_arrive")), "screen_t_end": rnd(w.get("screen_t_end"))})
+        if w.get("second_of") is not None:                 # (the second look: walked by the script's next walker)
+            res[-1].update(second_of=w["second_of"], both=bool(w.get("both")))
+        if w.get("id") in unshown:
+            res[-1]["shown"] = False                       # (its answer never shown: walked once more)
+    return res
+
+
+def replay_tally(res: list[dict]) -> dict:
+    """The answers the screen showed, right and wrong (replay_rows); with second looks also how many there were, and
+    the close calls answered from both walks apart: how their own answer (never shown) would have scored."""
+    dec = [r for r in res if r["decision"] and r.get("shown", True)]
+    out = {"decisions": len(dec), "decisions_right": sum(r["scored"] == "right" for r in dec),
+           "decisions_wrong": sum(r["scored"] == "wrong" for r in dec),
+           "decisions_close_calls": sum(bool(r["not_sure"]) for r in dec)}   # margin below tau (named anyway)
+    if any("second_of" in r for r in res):                 # classifier.second_look: close calls walked again (the
+        first = [r for r in res if r.get("shown") is False]   # script's next walk is the second look, whoever walks it)
+        out["second_looks"] = sum("second_of" in r for r in res)
+        out["close_calls_walked_again"] = {"walks": len(first),
+                                           "right_alone": sum(r["scored"] == "right" for r in first),
+                                           "wrong_alone": sum(r["scored"] == "wrong" for r in first)}
+    return out
+
+
 def run_replay(cfg: dict, script: str, speed: float = 1.0, headless: bool = False, fullscreen: bool = False) -> int:
     cfg = copy.deepcopy(cfg)                                   # the replay's own settings, never the caller's
     cfg["baseline"]["delay_s"] = 0.0                           # the script's Ctrl+B measures at once
@@ -1667,32 +1830,11 @@ def run_replay(cfg: dict, script: str, speed: float = 1.0, headless: bool = Fals
     summ["logger_pkt_per_stream_s"] = summ["logger_pkt_s"] / speed
     summ["queue_dropped"] = int(getattr(st, "queue_dropped", 0)) if st is not None else 0
     seen = [w for w in app.walk_log]
-    res = []
-    rnd = lambda x: round(x, 2) if x is not None else None  # noqa: E731
-
-    def scored(d, role: str) -> Optional[str]:
-        """Each answer against the script's known walker (the app tallies nothing, and a replay clicks no It
-        was ...): right or wrong."""
-        if d is None:
-            return None
-        return "right" if d.label == role else "wrong"
-
-    for truth, w in zip(plan.walks, seen):
-        d = w.get("decision")
-        res.append({"role": truth["role"], "purpose": w["purpose"], "seen": w["seen"],
-                    "decision": d.label if d else None, "margin": round(d.margin, 3) if d else None,
-                    "not_sure": d.not_sure if d else None, "speed": round(w["f"]["speed"], 2) if w["f"] else None,
-                    "gt_speed": round(truth["gt_speed"], 2), "scored": scored(d, truth["role"]), "reason": w["reason"],
-                    "active_s": round(w["active_s"], 2), "t_end": rnd(w.get("t_end")),
-                    "t_arrive": rnd(w.get("t_arrive")), "screen_t_end": rnd(w.get("screen_t_end"))})
+    res = replay_rows(plan.walks, seen)
     summ["walks"] = res
     summ["n_walks_planned"], summ["n_walks_seen_by_app"] = len(plan.walks), len(seen)
     summ["script"] = os.path.basename(script)
-    dec = [r for r in res if r["decision"]]
-    summ["decisions"] = len(dec)
-    summ["decisions_right"] = sum(r["scored"] == "right" for r in dec)
-    summ["decisions_wrong"] = sum(r["scored"] == "wrong" for r in dec)
-    summ["decisions_close_calls"] = sum(bool(r["not_sure"]) for r in dec)   # margin below tau (named anyway)
+    summ.update(replay_tally(res))
     summ["end_reasons"] = dict(collections.Counter(r["reason"] for r in res))
     # a scripted step the app refused sends the replay off script: say so, and return 1
     off = [f"walk {i + 1} should be Uzayr's learning walk (after Redo my walks) but the app took it as "
@@ -1711,8 +1853,9 @@ def run_replay(cfg: dict, script: str, speed: float = 1.0, headless: bool = Fals
     for r in res:
         print(f"  {r['role']:<8} {r['purpose']:<14} seen {str(r['seen']):<5} -> {str(r['decision']):<8} "
               f"margin {r['margin']}  speed {r['speed']} (truth {r['gt_speed']})  ended {r['reason']} at "
-              f"{r['t_end']} s, arrived {r['t_arrive']} s, on screen {r['screen_t_end']} s  {r['scored'] or ''}",
-              flush=True)
+              f"{r['t_end']} s, arrived {r['t_arrive']} s, on screen {r['screen_t_end']} s  {r['scored'] or ''}"
+              + ("  (from both walks)" if r.get("both") else "")
+              + ("  (not shown: walked once more)" if r.get("shown") is False else ""), flush=True)
     log.close()
     for msg in off:
         print(f"OFF SCRIPT: {msg}", flush=True)

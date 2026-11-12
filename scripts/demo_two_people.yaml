@@ -1,7 +1,9 @@
-# One visitor, the round of the day: the room, then New player, the visitor's two learning walks, then Uzayr's two
-# (pools.n_enrol 2, enrol_order visitor_first), then 10 mixed test walks. Walks are named by participant code:
-# P4's recorded walks play Uzayr; P3's play the visitor, typed in as "Lerato" (not a participant's name, so the
-# privacy check can grep for it). Day 1 natural; each step plays a random unused S pass (towards the boards).
+# One visitor, the round of the day: the room, then New player, the visitor's two learning walks, then Uzayr's five
+# (pools.n_enrol 2, n_enrol_uzayr 5, enrol_order visitor_first), then 10 mixed test walks (with
+# classifier.second_look a close call takes the next walk as its second look, whoever walks it in the script). Walks
+# are named by participant code: P4's recorded walks play Uzayr; P3's play the visitor, typed in as "Lerato" (not a
+# participant's name, so the privacy check can grep for it). Day 1 natural; each step plays a random unused S pass
+# (towards the boards).
 # A plumbing test: the shipped model was trained on all six thesis people, P4 and P3 included, so the
 # replay's tally says nothing about accuracy on new people (reports/eval_pair_*.md does).
 uzayr_standin: P4
@@ -13,6 +15,9 @@ steps:
   - {action: new_visitor, name: Lerato}
   - {walk: P3, day: 1, block: natural}
   - {walk: P3, day: 1, block: natural}
+  - {walk: P4, day: 1, block: natural}
+  - {walk: P4, day: 1, block: natural}
+  - {walk: P4, day: 1, block: natural}
   - {walk: P4, day: 1, block: natural}
   - {walk: P4, day: 1, block: natural}
   - {walk: P4, day: 1, block: natural}

@@ -2,9 +2,10 @@
 turn it is, the light, what the card and the operator's line say, and the 3D picture inside the app.
 
 Most tests play the round with a fixed answer (helpers._app), so they check the flow, not the model. A test marked
-`shipped` plays the round as shipped (the visitor's two learning walks first, then Uzayr's, his kept across players
-while fresh); one marked `alternate_round` plays the older alternating round, which can still be chosen
-(pools.enrol_order alternate: three learning walks each, Uzayr first, his walks wiped with each player)."""
+`shipped` plays the round as shipped (the visitor's two learning walks first, then Uzayr's five, his kept across
+players while fresh; a close call walked once more); one marked `alternate_round` plays the older alternating round,
+which can still be chosen (pools.enrol_order alternate: three learning walks each, Uzayr first, his walks wiped with
+each player)."""
 
 import collections
 import json
@@ -16,8 +17,8 @@ import pytest
 from matplotlib.backend_bases import MouseEvent
 
 from openday import bench, chain, models, screen, walks
-from openday.app import (App, RunLog, BUSY, DECIDING, ENROL_UZAYR, ENROL_VISITOR, IDLE, NAME_ENTRY, NEEDS_BASELINE,
-                         READY, RESULT, WALKING)
+from openday.app import (App, RunLog, AGAIN, BUSY, DECIDING, ENROL_UZAYR, ENROL_VISITOR, IDLE, NAME_ENTRY,
+                         NEEDS_BASELINE, READY, RESULT, TILE, WALKING, _times)
 from openday.chain import Columns
 
 from helpers import (HOP, cols, _app, _type, _feed, _walk, _to_game, _to_game_rest, _events, _cards, _labels, _light,
@@ -543,8 +544,10 @@ def test_last_walk_bar_colour_only_for_learning_walks(cfg, tmp_path):
 
 @pytest.mark.alternate_round
 def test_a_close_call_still_names_the_nearer_person(cfg, tmp_path):
-    """Below tau the card still names the nearer person, with How sure; the margin and not_sure stay in the log
-    and the events; a label counts right or wrong, never not sure."""
+    """With the second look off (classifier.second_look false: one walk per answer, as before): below tau the card
+    still names the nearer person, with How sure; the margin and not_sure stay in the log and the events; a label
+    counts right or wrong, never not sure."""
+    cfg["classifier"]["second_look"] = False
     close = models.Decision(label="uzayr", margin=0.01, not_sure=True, dist={},
                             contrib={"speed": 0.1, "steps": 0.0, "swing": 0.0, "bounce": 0.0}, why=["speed"])
     log = tmp_path / "run.log"
@@ -732,41 +735,75 @@ def test_light(cfg, tmp_path):
 # ---- the order: the visitor's walks first, then Uzayr's; alternate still selectable ----------------------------------
 
 def _n(cfg):
+    """The visitor's learning walks (pools.n_enrol)."""
     return int(cfg["pools"]["n_enrol"])
+
+
+def _nu(cfg):
+    """Uzayr's learning walks (pools.n_enrol_uzayr; pools.n_enrol when it is not set)."""
+    return int(cfg["pools"].get("n_enrol_uzayr", _n(cfg)))
+
+
+def _got(left):
+    """The notice after a learning walk with `left` more of the same person's to come."""
+    return "Got it! Once more." if left == 1 else f"Got it! {left} more walks."
+
+
+def _more(left):
+    """Redo my walks, part-way: "Uzayr walks once more" / "twice more" / "4 more times"."""
+    return f"Uzayr walks {_times(left)} more" if left <= 2 else f"Uzayr walks {left} more times"
 
 
 @pytest.mark.shipped
 def test_shipped_round_is_two_each_visitor_first(cfg):
     assert (cfg["pools"]["n_enrol"], cfg["pools"]["enrol_order"]) == (2, "visitor_first")
+    assert cfg["pools"]["n_enrol_uzayr"] == 5 <= cfg["pools"]["n_uzayr"]   # his own walks: kept, so more of them
     assert cfg["pools"]["uzayr_reuse_min"] == 25                   # (the age study)
+    assert cfg["classifier"]["second_look"] is True
 
 
 @pytest.mark.shipped
-def test_visitor_walks_first_then_uzayr_then_the_game(cfg, tmp_path):
+@pytest.mark.parametrize("uz", ["as shipped", "as before"])
+def test_visitor_walks_first_then_uzayr_then_the_game(cfg, tmp_path, uz):
+    """The visitor's walks, then Uzayr's own number (pools.n_enrol_uzayr, 5: "Walk 3 of 5: to the X, then stand
+    still." and a row of five dots); with it equal to pools.n_enrol ("as before") exactly the older round's words and
+    dots."""
+    if uz == "as before":
+        cfg["pools"]["n_enrol_uzayr"] = cfg["pools"]["n_enrol"]
+    nu = _nu(cfg)
     app = _app(cfg, tmp_path, record=True)
     _player(app)
     card = app.view(time.monotonic())["card"]
     assert card["big"] == "Le's turn" and card["big_color"] == screen.VISITOR
-    assert card["dots"]["rows"] == [("Le", screen.VISITOR, ["now", "next"]), ("Uzayr", screen.UZAYR, ["next", "next"])]
+    assert card["dots"]["rows"] == [("Le", screen.VISITOR, ["now", "next"]), ("Uzayr", screen.UZAYR, ["next"] * nu)]
     assert app.view(time.monotonic())["hint"][0] == "Click Start walk as Le sets off."
+    assert _now(app)["card"]["sub"] == "Stand on the back mark. Walk to the X, then stand still."
     _walk(app, 100.0)
     assert app.view(time.monotonic())["card"]["sub"] == "Got it! Once more."     # the card says what comes next
     _walk(app, 120.0)
     card = app.view(time.monotonic())["card"]
-    assert card["sub"] == "Got it! Now Uzayr walks twice."
+    assert card["sub"] == "Got it! Now Uzayr walks " + ("twice." if uz == "as before" else "5 times.")
     assert card["big"] == "Uzayr's turn" and card["big_color"] == screen.UZAYR
-    assert card["dots"]["rows"][0][2] == ["done", "done"] and card["dots"]["rows"][1][2] == ["now", "next"]
+    assert card["dots"]["rows"][0][2] == ["done", "done"]
+    assert card["dots"]["rows"][1][2] == ["now"] + ["next"] * (nu - 1)
     assert app.view(time.monotonic())["hint"][0] == "Click Start walk, then walk to the X yourself."
+    plain = "Stand on the back mark. Walk to the X, then stand still."
+    assert _now(app)["card"]["sub"] == (plain if uz == "as before" else "Walk 1 of 5: to the X, then stand still.")
     _walk(app, 140.0)
-    assert app.view(time.monotonic())["card"]["sub"] == "Got it! Once more."
-    t, who = _learn(app, 160.0)
-    assert who == ["uzayr"] and app.state == READY and app.visitor_ready
+    assert app.view(time.monotonic())["card"]["sub"] == _got(nu - 1)
+    if uz == "as shipped":
+        assert _now(app)["card"]["sub"] == "Walk 2 of 5: to the X, then stand still."
+        _walk(app, 160.0)
+        assert _now(app)["card"]["sub"] == "Walk 3 of 5: to the X, then stand still."
+        assert _now(app)["card"]["dots"]["rows"][1][2] == ["done", "done", "now", "next", "next"]
+    t, who = _learn(app, 200.0)
+    assert who == ["uzayr"] * (nu - 1 - (uz == "as shipped")) and app.state == READY and app.visitor_ready
     assert app.view(time.monotonic())["card"]["sub"] == "Got you both! Now the guessing game."
-    assert len(app.visitor) == len(app.uz_fresh) == 2
+    assert len(app.visitor) == 2 and len(app.uz_fresh) == nu
     labs = _labels(tmp_path)
-    assert [e["label"] for e in labs] == ["v", "v", "u", "u"] and all(e["source"] == "turn" for e in labs)
+    assert [e["label"] for e in labs] == ["v", "v"] + ["u"] * nu and all(e["source"] == "turn" for e in labs)
     _game(app, t)
-    assert len(app.uz_fresh) == len(app.visitor) == 2              # a game walk joins no pool
+    assert len(app.visitor) == 2 and len(app.uz_fresh) == nu       # a game walk joins no pool
 
 
 @pytest.mark.shipped
@@ -775,8 +812,10 @@ def test_alternate_order_keeps_the_old_turns(cfg, tmp_path):
     app = _app(cfg, tmp_path)
     _player(app)
     assert app.view(time.monotonic())["card"]["dots"]["rows"][0][0] == "Uzayr"   # Uzayr's row on top, as before
-    _, who = _learn(app, 100.0)
-    assert who == ["uzayr", "visitor"] * _n(cfg) and app.state == READY
+    _, who = _learn(app, 100.0)                                    # (taking turns while both have walks to go)
+    k = min(_n(cfg), _nu(cfg))
+    assert who == ["uzayr", "visitor"] * k + ["uzayr"] * (_nu(cfg) - k) + ["visitor"] * (_n(cfg) - k)
+    assert app.state == READY
 
 
 @pytest.mark.shipped
@@ -794,8 +833,8 @@ def test_undo_walk_redoes_uzayrs_turn_too(cfg, tmp_path):
     wid = app.last["id"]
     assert app.last["label"] == "u" and app.state == READY
     _type(app, ["backspace"])                                      # Uzayr's last walk was spoiled
-    assert app.state == ENROL_VISITOR and app._turn() == "uzayr" and app.done["uzayr"] == _n(cfg) - 1
-    assert len(app.uz_fresh) == _n(cfg) - 1 and app.view(time.monotonic())["card"]["big"] == "Uzayr's turn"
+    assert app.state == ENROL_VISITOR and app._turn() == "uzayr" and app.done["uzayr"] == _nu(cfg) - 1
+    assert len(app.uz_fresh) == _nu(cfg) - 1 and app.view(time.monotonic())["card"]["big"] == "Uzayr's turn"
     assert any(e["kind"] == "discard" and e["walk_id"] == wid for e in _events(tmp_path))
     _walk(app, t)
     assert app.state == READY and app.view(time.monotonic())["card"]["sub"].startswith("Got you both!")
@@ -818,7 +857,8 @@ def test_fresh_walks_are_reused_so_only_the_visitor_walks(cfg, tmp_path):
     assert app.uz_reused and len(app.visitor) == 0 and [w["id"] for w in app.uz_fresh.walks] == entries
     card = app.view(time.monotonic())["card"]
     assert card["big"] == "Si's turn"
-    assert card["dots"]["rows"] == [("Si", screen.VISITOR, ["now", "next"]), ("Uzayr", screen.UZAYR, ["done", "done"])]
+    assert card["dots"]["rows"] == [("Si", screen.VISITOR, ["now", "next"]),
+                                    ("Uzayr", screen.UZAYR, ["done"] * _nu(cfg))]
     t, who = _learn(app, t)
     assert who == ["visitor"] * _n(cfg) and app.state == READY and app.visitor_ready
     assert app.view(time.monotonic())["card"]["sub"] == "Got it! Now the guessing game."
@@ -855,7 +895,7 @@ def test_walks_are_not_reused_when_stale(cfg, tmp_path, why):
     _player(app, "Si")
     assert not app.uz_reused and len(app.uz_fresh) == 0 and app.done["uzayr"] == 0
     _, who = _learn(app, t)
-    assert who == ["visitor"] * _n(cfg) + ["uzayr"] * _n(cfg)
+    assert who == ["visitor"] * _n(cfg) + ["uzayr"] * _nu(cfg)
     assert app.view(time.monotonic())["card"]["sub"].startswith("Got you both!")
 
 
@@ -879,7 +919,7 @@ def test_measure_room_while_the_visitor_learns_asks_for_his_walks(cfg, tmp_path)
     _measure(app)
     assert not app.uz_reused and app.done["uzayr"] == 0 and app.state == ENROL_VISITOR
     _, who = _learn(app, t + 20)
-    assert who == ["visitor"] * (_n(cfg) - 1) + ["uzayr"] * _n(cfg)
+    assert who == ["visitor"] * (_n(cfg) - 1) + ["uzayr"] * _nu(cfg)
     assert [e["why"] for e in _events(tmp_path) if e["kind"] == "uzayr_dropped"] == ["room"]
     rounds, _ = bench.bench_rounds(_events(tmp_path))
     assert rounds[1]["reused"] == []                               # (not "reused" any more)
@@ -910,7 +950,7 @@ def test_measure_room_halfway_through_his_walks_takes_both_again(cfg, tmp_path, 
     assert app.done["uzayr"] == 0 and len(app.uz_fresh) == 0 and app.last is None
     assert app._turn() == "uzayr" and app.state in (ENROL_VISITOR, ENROL_UZAYR)
     t, who = _learn(app, t)
-    assert who == ["uzayr"] * _n(cfg)
+    assert who == ["uzayr"] * _nu(cfg)
     assert app._uz_reusable() and app._uz_note() == " Uzayr's walks: 1 min old."
     ids = [w["walk_id"] for w in app.uz_fresh.walks]
     _player(app, "Si")
@@ -929,11 +969,11 @@ def test_reuse_off_he_walks_every_round(cfg, tmp_path):
     _player(app, "Le")
     t, _ = _learn(app, 100.0)
     _type(app, ["ctrl+u"])                                         # nothing to redo
-    assert app.state == READY and len(app.uz_fresh) == _n(cfg)
+    assert app.state == READY and len(app.uz_fresh) == _nu(cfg)
     _player(app, "Si")
     assert len(app.uz_fresh) == 0 and not app.uz_reused
     _, who = _learn(app, t)
-    assert who.count("uzayr") == _n(cfg)
+    assert who.count("uzayr") == _nu(cfg)
     assert "Uzayr's walks" not in _now(app)["hint"][0] and "next round" not in _now(app)["hint"][0]
 
 
@@ -952,22 +992,24 @@ def test_redo_my_walks_in_the_game(cfg, tmp_path):
     assert app.state == ENROL_UZAYR and len(app.uz_fresh) == 0 and app.last is None and len(app.visitor) == _n(cfg)
     vm = app.view(time.monotonic())
     assert vm["card"]["big"] == "Uzayr's turn" and vm["buttons"]["enrol_uzayr"]["look"] == "off"
+    nu = _nu(cfg)
     assert vm["card"]["dots"]["rows"] == [("Le", screen.VISITOR, ["done", "done"]),
-                                          ("Uzayr", screen.UZAYR, ["now", "next"])]
+                                          ("Uzayr", screen.UZAYR, ["now"] + ["next"] * (nu - 1))]
     assert vm["who"] == "Uzayr vs Le"
     assert vm["hint"][0] == "Click Start walk as you set off. Undo walk keeps the old ones."   # (till he walks)
-    assert vm["card"]["sub"] == "Uzayr walks twice, then the game carries on."   # the visitor knows it goes on
-    _walk(app, t)
-    assert app.view(time.monotonic())["card"]["sub"] == "Got it! Once more."
+    assert vm["card"]["sub"] == f"Uzayr walks {_times(nu)}, then the game carries on."   # the visitor knows it
+    _walk(app, t)                                                                         # goes on
+    assert app.view(time.monotonic())["card"]["sub"] == _got(nu - 1)
     assert _now(app)["hint"][0] == "Click Start walk, then walk to the X yourself."
-    assert _now(app)["card"]["sub"] == "Uzayr walks once more, then the game carries on."
+    assert _now(app)["card"]["sub"] == f"{_more(nu - 1)}, then the game carries on."
+    assert nu != 5 or _now(app)["card"]["sub"] == "Uzayr walks 4 more times, then the game carries on."
     _type(app, ["backspace"])                                      # Undo walk works on his redo too
     assert app.state == ENROL_UZAYR and app.done["uzayr"] == 0
     t, who = _learn(app, t + 20)
-    assert who == ["uzayr"] * _n(cfg) and app.state == READY
+    assert who == ["uzayr"] * nu and app.state == READY
     assert app.view(time.monotonic())["card"]["sub"] == "Got it! Back to the game."
     new = [w["walk_id"] for w in app.uz_fresh.walks]
-    assert len(new) == _n(cfg) and not set(new) & set(old)
+    assert len(new) == nu and not set(new) & set(old)
     ev = [e for e in _events(tmp_path) if e["kind"] == "uzayr_redo"]
     assert len(ev) == 1 and ev[0]["index"] == app.vidx
     _player(app, "Si")
@@ -983,15 +1025,17 @@ def test_redo_my_walks_with_no_player(cfg, tmp_path):
     assert _now(app)["hint"][0] == "Click New player to start. Uzayr walks next round."
     _type(app, ["ctrl+u"])
     vm = app.view(time.monotonic())
-    assert app.state == ENROL_UZAYR and vm["card"]["dots"]["rows"] == [("Uzayr", screen.UZAYR, ["now", "next"])]
-    assert vm["card"]["sub"] == "Uzayr walks twice, then on to the next player."
+    nu = _nu(cfg)
+    assert app.state == ENROL_UZAYR and vm["card"]["dots"]["rows"] == [("Uzayr", screen.UZAYR,
+                                                                         ["now"] + ["next"] * (nu - 1))]
+    assert vm["card"]["sub"] == f"Uzayr walks {_times(nu)}, then on to the next player."
     assert vm["who"] == "" and vm["buttons"]["wipe_visitor"]["look"] == "off"
     assert vm["hint"][0] == "Click Start walk as you set off. Undo walk cancels this."   # (he had no walks)
     t, who = _learn(app, 100.0)
-    assert who == ["uzayr"] * _n(cfg) and app.state == IDLE
+    assert who == ["uzayr"] * nu and app.state == IDLE
     assert app.view(time.monotonic())["card"]["sub"] == "Got it! Ready for the next player."
     _type(app, ["backspace"])
-    assert app.state == ENROL_UZAYR and app.done["uzayr"] == _n(cfg) - 1
+    assert app.state == ENROL_UZAYR and app.done["uzayr"] == nu - 1
     _walk(app, t)
     assert app.state == IDLE and _now(app)["hint"][0] == "Click New player to start. Uzayr's walks: 1 min old."
     _player(app, "Le")
@@ -1019,7 +1063,7 @@ def test_redo_by_mistake_keeps_the_old_walks_until_he_walks(cfg, tmp_path, how):
     assert app.state == ENROL_UZAYR and app.done["uzayr"] == 0
     assert _now(app)["hint"][0] == "Click Start walk as you set off. Undo walk keeps the old ones."
     _type(app, {"undo walk": ["backspace"], "ctrl+u again": ["ctrl+u"], "clicker back": ["pageup"]}[how])
-    assert app.state == READY and app.visitor_ready and app.uz_fresh.walks == old and app.done["uzayr"] == _n(cfg)
+    assert app.state == READY and app.visitor_ready and app.uz_fresh.walks == old and app.done["uzayr"] == _nu(cfg)
     assert not app.uz_redo and app.uz_held is None
     vm = app.view(time.monotonic())
     assert vm["card"]["sub"] == "Back to the game." and vm["hint"][0] == "Kept the old walks."
@@ -1066,7 +1110,7 @@ def test_redo_is_dim_and_refused_with_no_signal(cfg, tmp_path):
     app.last_pkt_wall = time.monotonic() - 60.0                    # no packets for a minute
     assert app.view(time.monotonic())["buttons"]["enrol_uzayr"]["look"] == "off"
     _type(app, ["ctrl+u"])
-    assert app.state == RESULT and len(app.uz_fresh) == _n(cfg) and app.uz_held is None
+    assert app.state == RESULT and len(app.uz_fresh) == _nu(cfg) and app.uz_held is None
     assert app.view(time.monotonic())["hint"] == ("No signal: check RX2's USB and the TX charger.",
                                                    screen.STATUS["red"])
 
@@ -1095,12 +1139,12 @@ def test_undo_his_last_redo_walk_in_the_game_keeps_the_redo_card(cfg, tmp_path):
     t = _game(app, t)
     _type(app, ["ctrl+u"])
     t, who = _learn(app, t)
-    assert who == ["uzayr"] * _n(cfg) and app.state == READY
+    assert who == ["uzayr"] * _nu(cfg) and app.state == READY
     _type(app, ["backspace"])
-    assert app.state == ENROL_UZAYR and app.done["uzayr"] == _n(cfg) - 1 and not app.visitor_ready
+    assert app.state == ENROL_UZAYR and app.done["uzayr"] == _nu(cfg) - 1 and not app.visitor_ready
     card = _now(app)["card"]
     assert card["big"] == "Uzayr's turn" and card["sub"] == "Uzayr walks once more, then the game carries on."
-    assert card["dots"]["rows"][1] == ("Uzayr", screen.UZAYR, ["done", "now"])
+    assert card["dots"]["rows"][1] == ("Uzayr", screen.UZAYR, ["done"] * (_nu(cfg) - 1) + ["now"])
     _walk(app, t)
     assert app.state == READY and app.view(time.monotonic())["card"]["sub"] == "Got it! Back to the game."
     _type(app, ["ctrl+n", "y"])                                    # (the next player reuses the new walks)
@@ -1734,3 +1778,477 @@ def test_movement_a_lone_busy_column_barely_lifts_a_ridge_and_a_run_stands_it_up
     assert act[-3:] == pytest.approx(np.full(3, screen.RIDGE_E_MIN))
     assert act_for(np.zeros(20))[-1] == pytest.approx(screen.RIDGE_E_MIN)
     app.close()
+
+
+# ---- the second look: a close call walks once more (classifier.second_look) ------------------------------------------
+
+def _dec(label, margin, not_sure):
+    return models.Decision(label=label, margin=margin, not_sure=not_sure, dist={},
+                           contrib={"speed": -0.3, "steps": 0.1, "swing": -0.2, "bounce": 0.0}, why=["speed"])
+
+
+CLOSE_V = _dec("visitor", 0.05, True)                            # below the model's tau 0.1094: a close call
+CLEAR_V = _dec("visitor", 0.25, False)
+TILE_FMT = {n: fmt for n, (_label, fmt) in TILE.items()}          # a tile's value as the app writes it
+
+
+def _decides(app, *answers):
+    """The app's decisions in turn (then the last one again); the feature dicts it was asked about in `asked`."""
+    asked, left = [], list(answers)
+
+    def decide(f):
+        asked.append(dict(f))
+        return left.pop(0) if len(left) > 1 else left[0]
+    app._decide = decide
+    return asked
+
+
+def _to_close_call(app, t=100.0):
+    """A player, the learning walks, then a game walk that is too close to call: "walk once more"."""
+    _player(app)
+    t, _ = _learn(app, t)
+    asked = _decides(app, CLOSE_V)
+    _walk(app, t)
+    assert app.state == DECIDING and app.look2 is app.last
+    assert app.view(time.monotonic())["card"]["big"] == "Thinking …"   # (as before, the answer is coming)
+    assert app.view(time.monotonic())["card"]["sub"] == f"Comparing this walk with Uzayr's and {app.name}'s"
+    app._timers(app.timer + 0.01)
+    assert app.state == AGAIN, app.state
+    return t + 20.0, asked
+
+
+@pytest.mark.shipped
+def test_a_close_call_walks_once_more_and_answers_from_both_walks(cfg, tmp_path):
+    """A game walk below tau names nobody: "Walk once more!" ("Too close to call: the same walker again."), Start
+    walk is the next step (Undo walk can throw it away; no It was ..., no Redo my walks). The second walk's answer is
+    decided on the average of both walks' readings ("Comparing both walks ..." while it thinks) and says "(from both
+    walks)", How sure from the model's two-walk curve (the one-walk curve when the model file has none); the tiles
+    show the readings it was decided on, "Both walks". The recording links the two walks, an It was ... click labels
+    both, and the bench tools rebuild it."""
+    log = tmp_path / "run.log"
+    app = _app(cfg, tmp_path, record=True, log=str(log))
+    t, asked = _to_close_call(app)
+    first = app.last
+    vm = _now(app)
+    assert (vm["card"]["big"], vm["card"]["sub"]) == ("Walk once more!", "Too close to call: the same walker again.")
+    assert "conf" not in vm["card"] and "dots" not in vm["card"]
+    assert vm["hint"][0] == "The same walker again: click Start walk as they set off."
+    b = vm["buttons"]
+    assert (b["start_walk"]["label"], b["start_walk"]["look"]) == ("Start walk", "next")
+    assert b["discard"]["look"] == "on" and b["enrol_uzayr"]["look"] == "off"
+    assert "confirm_uzayr" not in b and "confirm_visitor" not in b   # nobody named yet: nothing to note
+    assert vm["tiles"]["speed"]["value"] != "-" and "pull" not in vm["tiles"]["speed"]   # the first walk's readings
+    assert vm["tiles"]["speed"]["bars"][0][0] == "Last walk"
+    ev = [e for e in _events(tmp_path) if e["kind"] == "walk"][-1]
+    assert ev["id"] == first["id"] and ev["second_look"] is True and ev["decision"]["not_sure"] is True
+    first["f"] = dict(first["f"], speed=first["f"]["speed"] + 0.4)  # (so the average differs from either walk)
+    asked = _decides(app, CLEAR_V)
+    _walk(app, t)                                                  # the same walker, once more
+    second = app.last
+    assert app.state == DECIDING and second["second_of"] == first["id"] and second["both"]
+    both = models.average_walks([first["f"], second["f"]])
+    assert asked[-1]["speed"] == pytest.approx(both["speed"])     # decided on both walks, averaged
+    assert asked[-1]["speed"] == pytest.approx((first["f"]["speed"] + second["f"]["speed"]) / 2)
+    vm = _now(app)
+    assert vm["card"]["sub"] == "Comparing both walks with Uzayr's and Le's"
+    for n in ("speed", "steps"):                                   # the tiles: what the answer is decided on
+        assert vm["tiles"][n]["bars"][0][0] == "Both walks"
+        assert vm["tiles"][n]["value"] == TILE_FMT[n].format(both[n])
+    assert vm["tiles"]["speed"]["value"] != TILE_FMT["speed"].format(second["f"]["speed"])
+    app._timers(app.timer + 0.01)
+    assert app.state == RESULT and app.look2 is None
+    vm = _now(app)
+    card = vm["card"]
+    assert card["big"] == "Le" and card["sub"] == "(from both walks)"
+    assert vm["tiles"]["speed"]["bars"][0][:2] == ("Both walks", f"{both['speed']:.2f}")   # (and "like ..." for it)
+    assert vm["tiles"]["speed"]["value"] == TILE_FMT["speed"].format(both["speed"]) and "pull" in vm["tiles"]["speed"]
+    if app.model is None:                                          # m0 (no model file here): the margin
+        assert card["conf"] == pytest.approx(0.25) and card["conf_text"] == "How sure: 25%"
+    # How sure from both walks: the model's two-walk curve, here synthetic so it differs from the one-walk one
+    app.model = app.model or models.Model("m1", ["speed"], np.zeros(1), np.ones(1))
+    app.model.cal_m, app.model.cal_p = np.array([0.0, 0.5]), np.array([0.5, 1.0])      # one walk at 0.25: 75 %
+    app.model.cal2_m, app.model.cal2_p = np.array([0.0, 0.5]), np.array([0.6, 0.8])    # both walks at 0.25: 70 %
+    card = _now(app)["card"]
+    assert card["conf"] == pytest.approx(0.70) and card["conf_text"] == "How sure: 70%"
+    app.model.cal2_m = app.model.cal2_p = None                     # a model file without one: the one-walk curve
+    card = _now(app)["card"]
+    assert card["conf"] == pytest.approx(0.75) and card["conf_text"] == "How sure: 75%"
+    assert _now(app)["buttons"]["confirm_visitor"]["look"] == "on"
+    ev = [e for e in _events(tmp_path) if e["kind"] == "walk"][-1]
+    assert ev["second_of"] == first["id"] and ev["decision"]["both"] is True and ev["alone"]["label"] == "visitor"
+    _type(app, ["v"])                                              # It was Le: both walks are hers
+    labs = _labels(tmp_path)[-2:]
+    assert [(e["walk_id"], e["label"]) for e in labs] == [(second["id"], "v"), (first["id"], "v")]
+    assert labs[0]["counted"] == "right" and labs[1]["counted"] is None and labs[1]["both_with"] == second["id"]
+    text = log.read_text()
+    assert "too close to call, walk once more" in text and f"(from both walks {first['id']} and {second['id']}" in text
+    rounds, pools = bench.bench_rounds(_events(tmp_path))
+    assert rounds[0]["seconds"] == {second["id"]: first["id"]} and pools[second["id"]] == pools[first["id"]]
+    _type(app, ["backspace"])                                      # Undo walk: both walks go
+    assert app.state == READY and app.last is None and app.look2 is None
+    assert app.view(time.monotonic())["card"]["sub"] == "Both walks removed."
+    gone = [e["walk_id"] for e in _events(tmp_path) if e["kind"] == "discard"]
+    assert gone[-2:] == [second["id"], first["id"]]
+
+
+@pytest.mark.shipped
+def test_second_look_at_most_once_per_game_walk(cfg, tmp_path):
+    """Still a close call on both walks: the answer names the nearer person anyway (no third walk); the next game
+    walk can ask again."""
+    app = _app(cfg, tmp_path)
+    t, _ = _to_close_call(app)
+    _decides(app, CLOSE_V)
+    _walk(app, t)
+    app._timers(app.timer + 0.01)
+    assert app.state == RESULT and app.last["both"] and app.last["decision"].not_sure
+    card = _now(app)["card"]
+    assert card["big"] == "Le" and card["sub"] == "(from both walks)"
+    _walk(app, t + 20.0)                                           # a new game walk, a close call again
+    app._timers(app.timer + 0.01)
+    assert app.state == AGAIN and "second_of" not in app.last
+
+
+@pytest.mark.shipped
+def test_second_look_cancel_returns_to_walk_once_more_and_undo_drops_the_close_call(cfg, tmp_path):
+    """Cancel walk (or the clicker's back key, or a lost signal) during the second walk: back to "walk once more";
+    Undo walk there throws the close call away: back to the game, nothing named."""
+    app = _app(cfg, tmp_path, record=True)
+    t, _ = _to_close_call(app)
+    first = app.last
+    for how in (["backspace"], ["pageup"], "signal"):
+        app.on_key_now("space", t)
+        assert app.state == WALKING and app.walk["second_of"] == first["id"]
+        if how == "signal":
+            app._abort("Signal lost")
+        else:
+            _type(app, how, t + 2.0)
+        assert app.state == AGAIN and app.look2 is first and app.last is first, how
+        if how != "signal":
+            assert app.view(time.monotonic())["card"]["sub"] == "Walk cancelled. Same walker again."
+        t += 20.0
+    _type(app, ["pageup"])                                         # the clicker's back key keeps the close call
+    assert app.state == AGAIN
+    _type(app, ["backspace"])                                      # Undo walk: the close call goes
+    assert app.state == READY and app.look2 is None and app.last is None
+    assert app.view(time.monotonic())["card"]["sub"] == "Last walk removed."
+    assert [e["walk_id"] for e in _events(tmp_path) if e["kind"] == "discard"][-1] == first["id"]
+    _decides(app, CLEAR_V)
+    _walk(app, t)                                                  # the next walk is a fresh game walk
+    assert "second_of" not in app.last and not app.last.get("both")
+
+
+@pytest.mark.shipped
+def test_a_missed_second_look_leaves_the_first_walks_answer(cfg, tmp_path):
+    """The second walk not seen: the first walk alone decides (its own answer, its own How sure), and in a
+    recording It was ... labels that first walk."""
+    app = _app(cfg, tmp_path, record=True)
+    t, _ = _to_close_call(app)
+    first = app.last
+    _walk(app, t, seen=False)
+    assert app.state == DECIDING and app.look2 is None and app.last is first
+    assert app.view(time.monotonic())["card"]["sub"] == "Missed that one. The answer is from the first walk."
+    app._timers(app.timer + 0.01)
+    assert app.state == RESULT
+    card = _now(app)["card"]
+    assert card["big"] == "Le" and "sub" not in card               # the first walk's answer, as one walk
+    ev = [e for e in _events(tmp_path) if e["kind"] == "walk"][-1]
+    assert ev["seen"] is False and ev["second_of"] == first["id"]
+    assert _now(app)["buttons"]["confirm_visitor"]["look"] == "on"
+    _type(app, ["v"])
+    assert [(e["walk_id"], e["counted"]) for e in _labels(tmp_path)][-1] == (first["id"], "right")
+    _type(app, ["backspace"])                                      # Undo walk: that first walk goes, back to the game
+    assert app.state == READY and app.last is None and app.look2 is None
+    assert app.view(time.monotonic())["card"]["sub"] == "Last walk removed."
+
+
+@pytest.mark.shipped
+def test_walk_once_more_and_the_other_buttons(cfg, tmp_path):
+    """On "walk once more": Redo my walks is refused and the clicker's back key keeps it (above)."""
+    app = _app(cfg, tmp_path)
+    _to_close_call(app)
+    _type(app, ["ctrl+u"])
+    assert app.state == AGAIN and app.view(time.monotonic())["hint"][0] == "Not now: finish this step first."
+    vm = _now(app)
+    assert vm["buttons"]["enrol_uzayr"]["look"] == "off" and vm["buttons"]["baseline"]["look"] == "on"
+
+
+def _receiver(app, what):
+    """One batch of packets in which the receiver restarted ("reboot") or went quiet past restart_gap_s ("lost"),
+    through App._process as the live stream brings it."""
+    real = app.chain.push
+
+    def push(lt, tm, data):
+        if what == "reboot":
+            app.chain.reboots += 1
+        else:
+            app.chain.silences += 1
+        z = np.zeros(0)
+        return Columns(z, np.zeros((0, app.n_bins)), np.zeros(0, bool), None, z, z, z)
+    app.chain.push = push
+    app.pending = [(0, time.monotonic(), np.zeros(256, np.int8))]
+    try:
+        app._process()
+    finally:
+        app.chain.push = real
+
+
+def _thinking_close_call(app, t=100.0):
+    """A player, the learning walks, then a close call still on Thinking (its answer not up yet)."""
+    _player(app)
+    t, _ = _learn(app, t)
+    _decides(app, CLOSE_V)
+    _walk(app, t)
+    assert app.state == DECIDING and app.look2 is app.last
+    return t + 20.0
+
+
+# every way off "walk once more" (or its Thinking step) that must come back to it, the close call still waiting
+BACK = ["measure room", "measure room fails", "measure room, receiver silent", "measure room, receiver restarts",
+        "measure room from Thinking", "measure room from Thinking fails", "lost signal", "receiver restart",
+        "lost signal in the second walk", "receiver restart in the second walk", "cancel the second walk",
+        "new player then Cancel", "new player then Cancel from Thinking", "End game box: Keep going",
+        "Quit box: Keep going"]
+
+
+@pytest.mark.shipped
+@pytest.mark.parametrize("how", BACK)
+def test_every_way_off_walk_once_more_comes_back_to_it(cfg, tmp_path, how):
+    """The close call waits for its second walk on "Walk once more!" only, and every fallback comes back to that
+    card (never "Who's walking?" with a hidden close call): Measure room whether it works, fails or the receiver
+    goes during it (from its Thinking step too), a lost signal or a receiver restart (on the card, or during the
+    second walk: back to it), Cancel walk, New player then Cancel, Keep going in the End game and Quit boxes. The
+    next game walk is then its second look, decided on both walks."""
+    app = _app(cfg, tmp_path, record=True)
+    if "from Thinking" in how:
+        t = _thinking_close_call(app)
+    else:
+        t, _ = _to_close_call(app)
+    first = app.last
+    n = len(app.chain.freqs)
+    room = chain.Baseline(np.ones(n), 1.0, 100, app.chain.spec.variant, app.chain.spec.nfft)
+    if how.startswith("measure room"):
+        _type(app, ["ctrl+b"], t)
+        assert app.state == BUSY
+        if how.endswith("fails"):
+            app._finish_baseline()                             # too few packets: "Measuring failed"
+            assert app.view(time.monotonic())["hint"][0].startswith("Measuring failed")
+        elif how.endswith("receiver silent"):
+            app._abort("Receiver silent")
+        elif how.endswith("receiver restarts"):
+            _receiver(app, "reboot")
+        else:                                                  # measured (_finish_baseline's own ending)
+            app.capture = None
+            app._set_baseline(room, "captured")
+        if "from Thinking" in how and app.state == DECIDING:   # (measured: its Thinking step, then the card)
+            app._timers(app.timer + 0.01)
+    elif how in ("lost signal", "receiver restart"):
+        _receiver(app, "lost" if how == "lost signal" else "reboot")
+        assert app.last_end_dev is None or how == "lost signal"
+    elif how.endswith("in the second walk") or how == "cancel the second walk":
+        app.on_key_now("space", t)
+        assert app.state == WALKING and app.walk["second_of"] == first["id"]
+        if how == "cancel the second walk":
+            _type(app, ["backspace"], t + 2.0)
+            assert _now(app)["card"]["sub"] == "Too close to call: the same walker again."
+            assert app.view(time.monotonic())["card"]["sub"] == "Walk cancelled. Same walker again."
+        else:
+            _receiver(app, "lost" if how.startswith("lost") else "reboot")
+            assert app.view(time.monotonic())["card"]["sub"] == "Lost the signal. Walk again when the light is green."
+        t += 20.0
+    elif how.startswith("new player then Cancel"):
+        _type(app, ["n", "S", "i"])
+        assert app.state == NAME_ENTRY
+        _type(app, ["escape"])
+    elif how == "End game box: Keep going":
+        _type(app, ["ctrl+n"])
+        assert app.view(time.monotonic())["overlay"][0] == "End the game?"
+        _type(app, ["escape"])
+    elif how == "Quit box: Keep going":
+        _type(app, ["ctrl+q"])
+        assert app.view(time.monotonic())["overlay"][0] == "Quit?"
+        _type(app, ["escape"])
+        assert not app.stop.is_set()
+    app._repair()
+    assert app.state == AGAIN, (how, app.state)
+    assert app.look2 is first and app.last is first
+    card = _now(app)["card"]
+    assert (card["big"], card["sub"]) == ("Walk once more!", "Too close to call: the same walker again.")
+    _decides(app, CLEAR_V)
+    _walk(app, t + 20.0)                                       # the same walker once more: the second look
+    second = app.last
+    assert second["second_of"] == first["id"] and second["both"]
+    app._timers(app.timer + 0.01)
+    assert app.state == RESULT and _now(app)["card"]["sub"] == "(from both walks)"
+
+
+# the ways that drop the close call: nobody named for it, the next game walk a new one (or no game at all)
+DROP = ["Undo walk", "End game", "new player", "Quit"]
+
+
+@pytest.mark.shipped
+@pytest.mark.parametrize("how", DROP)
+def test_the_ways_that_drop_a_close_call(cfg, tmp_path, how):
+    """Undo walk on "Walk once more!" throws the close call away ("Last walk removed.", back to the game); End game,
+    a new player and Quit drop it with the player. Then nothing waits: the next walk is never a second look."""
+    log = tmp_path / "run.log"
+    app = _app(cfg, tmp_path, record=True, log=str(log))
+    t, _ = _to_close_call(app)
+    first = app.last
+    if how == "Undo walk":
+        _type(app, ["backspace"])
+        assert app.state == READY and app.last is None
+        assert app.view(time.monotonic())["card"]["sub"] == "Last walk removed."
+    elif how == "End game":
+        _type(app, ["ctrl+n", "y"])
+        assert app.state == IDLE and app.name is None
+    elif how == "new player":
+        _player(app, "Si")
+        assert app.state == ENROL_VISITOR
+    else:
+        _type(app, ["ctrl+q", "y"])
+        assert app.stop.is_set()
+        app.close()
+    assert app.look2 is None and not app._close_call_waits()
+    assert f"walk {first['id']} close call dropped" in log.read_text()
+    if how == "Quit":
+        assert app.name is None and app.walk_log == []
+        return
+    if how == "new player":
+        t, _ = _learn(app, t)
+    _decides(app, CLEAR_V)
+    _walk(app, t + 20.0)
+    assert "second_of" not in app.last and not app.last.get("both")
+    assert "second_of" not in [e for e in _events(tmp_path) if e["kind"] == "walk"][-1]
+
+
+@pytest.mark.shipped
+def test_a_second_look_starts_only_from_walk_once_more(cfg, tmp_path):
+    """A close call left waiting where it should not be (a state the fallbacks never reach now): a game walk from
+    there is a new walk, not its second look, and the close call goes (logged); "Walk once more!" without its close
+    call is repaired to the game with a notice."""
+    log = tmp_path / "run.log"
+    app = _app(cfg, tmp_path, log=str(log))
+    t, _ = _to_close_call(app)
+    first = app.last
+    app.state = READY                                          # (forced: nothing in the app leaves it like this)
+    _decides(app, CLEAR_V)
+    _walk(app, t)
+    assert "second_of" not in app.last and app.look2 is None
+    assert f"walk {first['id']} close call dropped: walk {app.last['id']} started from READY" in log.read_text()
+    b = _app(cfg, tmp_path / "b", log=str(log))
+    _to_close_call(b)
+    b.look2 = None                                             # (forced: "walk once more" without its close call)
+    b._repair()
+    assert b.state == READY and b.view(time.monotonic())["card"]["sub"] == "Walk again from the back mark."
+    assert "state repaired: AGAIN -> READY" in log.read_text()
+
+
+@pytest.mark.shipped
+def test_second_look_off_is_one_walk_per_answer(cfg, tmp_path):
+    """classifier.second_look false: a close call is answered at once, as before, and the events have no
+    second-look keys."""
+    cfg["classifier"]["second_look"] = False
+    app = _app(cfg, tmp_path, record=True)
+    _player(app)
+    t, _ = _learn(app, 100.0)
+    _decides(app, CLOSE_V)
+    _walk(app, t)
+    assert app.look2 is None
+    app._timers(app.timer + 0.01)
+    assert app.state == RESULT and _now(app)["card"]["big"] == "Le" and "sub" not in _now(app)["card"]
+    _walk(app, t + 20.0)
+    assert "second_of" not in app.last
+    for e in _events(tmp_path):
+        assert not {"second_look", "second_of", "alone"} & set(e), e
+
+
+@pytest.mark.shipped
+def test_a_second_look_started_while_thinking_is_still_the_second_look(cfg, tmp_path):
+    """(A replay has no after-walk lock:) Start walk during Thinking after a close call is its second walk."""
+    app = _app(cfg, tmp_path)
+    _player(app)
+    t, _ = _learn(app, 100.0)
+    _decides(app, CLOSE_V, CLEAR_V)
+    _walk(app, t)
+    assert app.state == DECIDING
+    first = app.last
+    app.on_key_now("space", t + 20.0)
+    assert app.state == WALKING and app.walk["second_of"] == first["id"] and app.walk["from"] == AGAIN
+    _feed(app, [30.0] * 60 + [1.0] * 20, t + 20.0)
+    app._timers(app.timer + 0.01)
+    assert app.state == RESULT and app.last["both"]
+
+
+@pytest.mark.shipped
+@pytest.mark.parametrize("curve, on, said", [(False, True, True), (True, True, False), (False, False, False)])
+def test_the_run_log_says_once_when_the_model_has_no_two_walk_curve(cfg, tmp_path, curve, on, said):
+    """The two-walk How sure curve is fitted separately, after training: with the second look on and a model file
+    without one (a retrained model before it is refitted), the run log says once, at start, that an answer from
+    both walks reads the one-walk curve."""
+    m = models.Model("m1", ["speed"], np.zeros(1), np.ones(1), P=np.eye(1), lam=np.ones(1),
+                     cal_m=np.array([0.0, 0.4]), cal_p=np.array([0.55, 0.95]))
+    if curve:
+        m.cal2_m, m.cal2_p = np.array([0.0, 0.4]), np.array([0.5, 0.9])
+    path = tmp_path / "model.json"
+    m.save(str(path))
+    cfg["classifier"].update(kind="m1", model_path=str(path), second_look=on)
+    log = tmp_path / "run.log"
+    app = _app(cfg, tmp_path, log=str(log))
+    assert app.model is not None and (app.model.cal2_m is not None) == curve
+    if on:                                                         # (a close call: still said only once)
+        _to_close_call(app)
+    app.close()
+    said_n = log.read_text().count("second look: the model has no two-walk How sure curve")
+    assert said_n == (1 if said else 0)
+
+
+@pytest.mark.shipped
+@pytest.mark.parametrize("player", [True, False])
+def test_redo_card_counts_down_his_five_walks(cfg, tmp_path, player):
+    """Redo my walks with his five: "Uzayr walks 5 times", then "4 more times", "3 more times", "twice more", "once
+    more" (in a game, or with no player)."""
+    app = _app(cfg, tmp_path)
+    t = 100.0
+    if player:
+        _player(app)
+        t, _ = _learn(app, t)
+    _type(app, ["ctrl+u"])
+    subs = []
+    while app.state == ENROL_UZAYR:
+        subs.append(_now(app)["card"]["sub"])
+        _walk(app, t)
+        t += 20.0
+    then = ", then the game carries on." if player else ", then on to the next player."
+    assert subs == [w + then for w in ("Uzayr walks 5 times", "Uzayr walks 4 more times", "Uzayr walks 3 more times",
+                                       "Uzayr walks twice more", "Uzayr walks once more")]
+
+
+@pytest.mark.shipped
+def test_his_five_walks_are_reused_and_redone(cfg, tmp_path):
+    """pools.n_enrol_uzayr 5: his five walks are kept and reused by the next player within 25 minutes (only the
+    visitor walks), a whole set is needed (four do not count), and Redo my walks takes five again."""
+    assert _nu(cfg) == 5
+    app = _app(cfg, tmp_path, record=True)
+    _player(app, "Le")
+    t, who = _learn(app, 100.0)
+    assert who == ["visitor"] * 2 + ["uzayr"] * 5 and len(app.uz_fresh) == 5
+    t = _game(app, t)
+    _age(app, 24.0)
+    _player(app, "Si")
+    assert app.uz_reused and len(app.uz_fresh) == 5
+    t, who = _learn(app, t)
+    assert who == ["visitor"] * 2
+    ev = [e for e in _events(tmp_path) if e["kind"] == "uzayr_reused"][-1]
+    assert len(ev["walk_ids"]) == 5
+    t = _game(app, t)
+    _, pools = bench.bench_rounds(_events(tmp_path))
+    assert pools[app.last["id"]]["u"] == ev["walk_ids"]
+    _type(app, ["ctrl+u"])
+    t, who = _learn(app, t)
+    assert who == ["uzayr"] * 5 and app.state == READY
+    _type(app, ["backspace"])                                      # one of his five undone: not a whole set
+    _type(app, ["ctrl+n", "y"])
+    _player(app, "Mo")
+    assert not app.uz_reused and app.done["uzayr"] == 0
+    _, who = _learn(app, t + 20.0)
+    assert who == ["visitor"] * 2 + ["uzayr"] * 5

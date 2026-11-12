@@ -2,8 +2,8 @@
 (This file is screenshots.py, so it is not confused with screen.py, the window itself.)
 
 This file, in order:
-  1. The demo players and the fixed answers (NAME, NAME2, UZAYR, VISITOR, ANSWER_V, ANSWER_U, CLOSE), and the
-     captions of the main path (FLOW).
+  1. The demo players and the fixed answers (NAME, NAME2, UZAYR, VISITOR, ANSWER_V, ANSWER_U, CLOSE, CLOSE_V,
+     BOTH_V), and the captions of the main path (FLOW, flow).
   2. An app with a pretend receiver: _Shots makes the apps and saves each shot; signal (pretend packets), echo
      (the waterfall) and ridges (the 3D picture) fill the graphs.
   3. Clicking and walking through the app: start, walk, keys, learn, age.
@@ -35,7 +35,7 @@ import numpy as np
 
 import openday
 from openday import chain, models, screen
-from openday.app import App, RunLog, BUSY, DECIDING, ENROL_UZAYR, ENROL_VISITOR, IDLE, RESULT, WALKING
+from openday.app import App, RunLog, AGAIN, BUSY, DECIDING, ENROL_UZAYR, ENROL_VISITOR, IDLE, RESULT, WALKING, _times
 
 # --- 1. The demo players and the fixed answers ---
 
@@ -59,6 +59,11 @@ ANSWER_U = _dec("uzayr", 0.12, {"speed": 0.40, "steps": 0.25, "swing": 0.03, "bo
                 ["speed", "step rate"])
 # a close call (margin below tau): the app still names the nearer person, less sure
 CLOSE = _dec("uzayr", 0.03, {"speed": 0.06, "steps": 0.02, "swing": 0.01, "bounce": 0.0}, ["speed"], not_sure=True)
+# the second look (classifier.second_look): a close call on Lerato's walk, then her answer from both walks
+CLOSE_V = _dec("visitor", 0.05, {"speed": -0.08, "steps": -0.02, "swing": -0.03, "bounce": 0.0}, ["speed"],
+               not_sure=True)
+BOTH_V = _dec("visitor", 0.22, {"speed": -0.40, "steps": -0.10, "swing": -0.30, "bounce": -0.02},
+              ["speed", "leg swing"])
 
 # flow.png: the main path, in order: (file stem, caption), after the set-up panel (run adds it first).
 FLOW = [("04_welcome", "2. Click New player"),
@@ -69,6 +74,23 @@ FLOW = [("04_welcome", "2. Click New player"),
         ("17_answer_lerato", "7. The answer; then Next walk"),
         ("19_close_call", "8. A close call: still a name, less sure"),
         ("28_reuse_learning", "9. Next player: your walks are kept")]
+
+
+def flow(cfg: dict) -> list:
+    """FLOW for this configuration: how many learning walks each walks, and with classifier.second_look the close
+    call's "walk once more" in place of a close-call answer."""
+    nv = int(cfg["pools"]["n_enrol"])
+    nu = int(cfg["pools"].get("n_enrol_uzayr", nv))
+    out = []
+    for stem, cap in FLOW:
+        if stem == "06_learning_lerato_turn":
+            cap = f"4. The visitor walks {_times(nv)}: Start walk"
+        elif stem == "09_learning_uzayr_turn":
+            cap = f"5. Then you walk {_times(nu)} (skipped while yours are fresh)"
+        elif stem == "19_close_call" and cfg["classifier"].get("second_look"):
+            stem, cap = "36_walk_once_more", "8. Too close to call: the same walker walks once more"
+        out.append((stem, cap))
+    return out
 
 
 # --- 2. An app with a pretend receiver ---
@@ -367,10 +389,10 @@ def run(cfg: dict, out: Optional[str] = None, dpi: int = DPI) -> list:
         _notices(sh)                                       # 32-35 (after 31, so 01-31 keep their numbers)
         sh.close()
         first = ("01_setup", "1. Set-up: click Measure room")
-        flow = [first] + [x for x in FLOW if screen.redo_button(cfg) or not x[0].startswith("28_")]
+        flow_ = [first] + [x for x in flow(cfg) if screen.redo_button(cfg) or not x[0].startswith("28_")]
         flow_png = os.path.join(out, "flow.png")
-        _montage([os.path.join(out, f + ".png") for f, _ in flow], [c for _, c in flow], flow_png,
-                 cols=3 if len(flow) == 9 else 4)
+        _montage([os.path.join(out, f + ".png") for f, _ in flow_], [c for _, c in flow_], flow_png,
+                 cols=3 if len(flow_) == 9 else 4)
         sh.files.append(flow_png)
         _lights(sh, os.path.join(out, "lights.png"))
     finally:
@@ -453,6 +475,12 @@ def _main_path(sh: _Shots) -> None:
     walk(a, (0.92, 110, 2.0, 0.33), decision=CLOSE)
     a._timers(a.timer + 0.01)
     echo(a, "walked", speed=0.92, seed=4)
+    if a.second_look:                                      # too close to call: the same walker walks once more,
+        assert a.state == AGAIN, a.state                   # and is still close on both walks: a name, less sure
+        sh.shot(a, "36_walk_once_more")
+        walk(a, (0.92, 110, 2.0, 0.33), decision=CLOSE)
+        a._timers(a.timer + 0.01)
+        assert a.state == RESULT and a.last.get("both"), a.state
     sh.shot(a, "19_close_call")
     keys(a, ["ctrl+q"])
     sh.act()
@@ -463,6 +491,15 @@ def _main_path(sh: _Shots) -> None:
     sh.act()
     echo(a, "quiet", seed=5)
     sh.shot(a, "20_notice_lost_signal", notice=True)
+    if a.second_look:                                      # Lerato's close call, then her answer from both walks
+        walk(a, (1.11, 119, 2.4, 0.40), decision=CLOSE_V)
+        a._timers(a.timer + 0.01)
+        assert a.state == AGAIN, a.state
+        walk(a, (1.14, 122, 2.5, 0.41), decision=BOTH_V)
+        a._timers(a.timer + 0.01)
+        assert a.state == RESULT and a.last.get("both"), a.state
+        echo(a, "walked", speed=1.14, seed=11)
+        sh.shot(a, "37_answer_both_walks")
 
 
 def _others(sh: _Shots) -> None:

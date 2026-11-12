@@ -143,6 +143,9 @@ CARD_PT = CARD_BOX[3] * BASE_H * 72.0                  # the card's height in po
 # the learning dots (card coordinates): each row's name at DOTS_NAME_X, its dots from DOTS_X; the big text beside
 # them ends at BIG_DOTS_X1 (further right than beside the answer's bar, 0.60: a turn's name gets more room)
 DOTS_NAME_X, DOTS_X, BIG_DOTS_X1 = 0.66, 0.78, 0.64
+# up to 3 dots in a row: DOTS_W wide, DOTS_STEP apart; a row of 4 or 5 (pools.n_enrol_uzayr) takes the same room with
+# narrower dots (DOTS_W5, DOTS_STEP5: the fifth ends where the third does), in both rows
+DOTS_W, DOTS_STEP, DOTS_W5, DOTS_STEP5, DOTS_MAX = 0.05, 0.07, 0.03, 0.04, 5
 # the tiles' comparison rows (tile coordinates): the name, its value right-aligned at VALUE_X, then the bar ("Last
 # walk" and a 4-character value keep their full size in the narrower tiles, on the MacBook's screen too)
 VALUE_X, BAR_X, BAR_W = 0.60, 0.63, 0.31
@@ -387,12 +390,12 @@ class Screen:
         self.conf_txt = self._text(0.62, 0.80, "", 22, color=INK2, ax=self.card, fit_x=0.97)
         self.why = self._text(0.62, 0.25, "", 22, color=INK, va="center", ax=self.card, fit_x=0.97)
         self.why._raw, self.why._wrap_at = "", 0.8         # "Told apart by:" on a line of its own rather than small
-        # the learning walks as two rows of up to three named dots (in the order walked), done / now / to come
+        # the learning walks as two rows of up to DOTS_MAX named dots (in the order walked), done / now / to come
         self.track = []
         self.dot_names = []
-        for i in range(6):
-            row, j = divmod(i, 3)
-            r = Rectangle((DOTS_X + j * 0.07, 0.60 if row == 0 else 0.25), 0.05, 0.22, color=BG, visible=False)
+        for i in range(2 * DOTS_MAX):
+            row, j = divmod(i, DOTS_MAX)
+            r = Rectangle((DOTS_X + j * DOTS_STEP, 0.60 if row == 0 else 0.25), DOTS_W, 0.22, color=BG, visible=False)
             self.card.add_patch(r)
             self.track.append(r)
         for y, col in ((0.71, UZAYR), (0.36, VISITOR)):
@@ -973,8 +976,12 @@ class Screen:
         """dots = {"rows": [(name, colour, [state, ...]), (name, colour, [...])]} with states done / now / next, the
         first row on top, each name in its row's colour; None hides them. No letters."""
         rows = dots["rows"] if dots else []
+        many = any(len(r[2]) > 3 for r in rows)            # 4 or 5 in a row: narrower dots, the same room
+        w, step = (DOTS_W5, DOTS_STEP5) if many else (DOTS_W, DOTS_STEP)
         for k, r in enumerate(self.track):
-            row, j = divmod(k, 3)
+            row, j = divmod(k, DOTS_MAX)
+            r.set_x(DOTS_X + j * step)
+            r.set_width(w)
             st = rows[row][2][j] if row < len(rows) and j < len(rows[row][2]) else None
             r.set_visible(st is not None)
             if st is not None:

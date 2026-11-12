@@ -80,7 +80,18 @@ classifier:
   model_path: state/model/model.json   # m1 / m2: the trained model, fitted on the six thesis people only
                                        # (eval-pair --write would overwrite it with its own recipe)
   model_tau: 0.1094            # m1 / m2: a margin below this is a close call: the answer still names the nearer
-                               # person, and the log counts it; about 15 % of live test decisions fall below it
+                               # person (with second_look: after one more walk), and the log counts it; about 15 % of
+                               # live test decisions fall below it
+  second_look: true            # a GAME walk below the close-call line (model_tau; m0: tau) names nobody yet: the card
+                               # says "Walk once more!" (too close to call) and the same walker walks again; the answer
+                               # is then decided on both walks (their readings averaged) and says "(from both walks)".
+                               # At most one extra walk per game walk; if the second walk is missed, the first walk
+                               # alone decides. Its "How sure" reads a two-walk curve (cal2_m / cal2_p) that is NOT
+                               # part of training: training_home/fit_cal2.py fits it separately and adds it to the
+                               # model file (laptop only). A retrained model has none until it is refitted: it then
+                               # reads the one-walk curve (the run log says so at start). Thesis people, leave two
+                               # out, the installed model: about 16 % of game walks, +2.5 points (89.5 -> 92 %)
+                               # false = one walk per answer, as before
   use: [speed, steps, swing, bounce]   # m0: features the decision uses (the tiles always show all four)
   tau: 0.08                    # fitted by eval: m0 only (no trained model): a margin below this is a close call
                                # (logged; the answer still names the nearer person)
@@ -91,9 +102,11 @@ classifier:
     bounce: 0.0444
 
 pools:
-  n_uzayr: 5                   # the most learning walks Uzayr's pool keeps (at least n_enrol)
+  n_uzayr: 5                   # the most learning walks Uzayr's pool keeps (at least n_enrol_uzayr)
   n_visitor: 5                 # the most learning walks the visitor's pool keeps (at least n_enrol)
-  n_enrol: 2                   # learning walks per person (2 each cost about 2-3 points against 3, ~45 s quicker)
+  n_enrol: 2                   # learning walks per visitor (2 each cost about 2-3 points against 3, ~45 s quicker)
+  n_enrol_uzayr: 5             # Uzayr's own learning walks (at most n_uzayr; the same as n_enrol: as before). His walks
+                               # are kept and reused (uzayr_reuse_min), so 5 cost time only once every 25 minutes
   enrol_order: visitor_first   # visitor_first (the visitor walks n_enrol times, then Uzayr) or alternate (Uzayr
                                # first, then taking turns: U, V, U, V)
   uzayr_reuse_min: 25          # Uzayr's learning walks are kept (memory only) and reused for the next player while

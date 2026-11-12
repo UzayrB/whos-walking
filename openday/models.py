@@ -5,7 +5,8 @@ This file, in order:
      "not sure".
   2. The trained models: the features they use, Model (saved as JSON) and load_model. evaluate.py fits them
      on the thesis people.
-  3. Deciding one walk with a model (decide), and the plain words for what separated it (why).
+  3. Deciding one walk with a model (decide), two walks averaged for the second look (average_walks; its How
+     sure is Model.how_sure_both), and the plain words for what separated it (why).
   4. The pools (each person's learning walks, in memory only) and the day's tally.
 
 Two-person decisions for people the model never saw in training (the speaker-verification idea).
@@ -134,12 +135,22 @@ class Model:
     meta: dict = field(default_factory=dict)
     cal_m: Optional[np.ndarray] = None             # "How sure": margin knots ...
     cal_p: Optional[np.ndarray] = None             # ... and how often decisions that clear were right (leave-two-out)
+    cal2_m: Optional[np.ndarray] = None            # the same for an answer from both walks (the second look): the
+    cal2_p: Optional[np.ndarray] = None            # two walks' margin -> how often such answers were right
 
     def how_sure(self, margin: float) -> Optional[float]:
         """The share of leave-two-out decisions with this margin that were right (rising with the margin)."""
-        if self.cal_m is None or not len(self.cal_m):
-            return None
-        return min(float(np.interp(margin, self.cal_m, self.cal_p)), 0.99)   # never "100 %"
+        return _read_curve(self.cal_m, self.cal_p, margin)
+
+    def how_sure_both(self, margin: float) -> Optional[float]:
+        """How sure for an answer from both walks (classifier.second_look): the share of leave-two-out close calls
+        walked once more whose answer from both walks, with this margin, was right (cal2_m / cal2_p: not part of
+        training, fitted separately afterwards by training_home/fit_cal2.py and added to the model file, laptop
+        only; a newly trained model has none until it is refitted). Without that curve: the one-walk curve
+        (how_sure)."""
+        if self.cal2_m is None or not len(self.cal2_m):
+            return self.how_sure(margin)
+        return _read_curve(self.cal2_m, self.cal2_p, margin)
 
     # -- save / load (JSON only, thesis data only) ------------------------------------------------------
     def to_json(self) -> dict:
@@ -148,15 +159,22 @@ class Model:
                 "tau": float(self.tau), "prior_sd": dict(self.prior_sd), "P": arr(self.P), "lam": arr(self.lam),
                 "w": arr(self.w), "b": float(self.b), "plda": bool(self.plda),
                 "session_centre": bool(self.session_centre), "meta": self.meta, "cal_m": arr(self.cal_m),
-                "cal_p": arr(self.cal_p)}
+                "cal_p": arr(self.cal_p), "cal2_m": arr(self.cal2_m), "cal2_p": arr(self.cal2_p)}
 
     @staticmethod
     def from_json(d: dict) -> "Model":
         arr = lambda a: None if a is None else np.asarray(a, float)  # noqa: E731
+
+        def extra(a):                                      # the two-walk curve (optional, fitted separately): one
+            try:                                           # that is not numbers never stops the model loading
+                return arr(a)                              # (load_model then drops it, logged)
+            except (TypeError, ValueError):
+                return np.array([np.nan])
         return Model(d["kind"], list(d["names"]), arr(d["mu"]), arr(d["sd"]), float(d["tau"]),
                      dict(d.get("prior_sd", {})), arr(d.get("P")), arr(d.get("lam")), arr(d.get("w")),
                      float(d.get("b", 0.0)), bool(d.get("plda", False)), bool(d.get("session_centre", False)),
-                     dict(d.get("meta", {})), arr(d.get("cal_m")), arr(d.get("cal_p")))
+                     dict(d.get("meta", {})), arr(d.get("cal_m")), arr(d.get("cal_p")), extra(d.get("cal2_m")),
+                     extra(d.get("cal2_p")))
 
     def save(self, path: str) -> None:
         tmp = path + ".tmp"
@@ -177,6 +195,22 @@ class Model:
         return np.where(np.isfinite(Z), Z, 0.0)
 
 
+def _read_curve(cm: Optional[np.ndarray], cp: Optional[np.ndarray], margin: float) -> Optional[float]:
+    """A How-sure curve read at this margin, capped at 99 % (never "100 %"); None without a curve."""
+    if cm is None or not len(cm):
+        return None
+    return min(float(np.interp(margin, cm, cp)), 0.99)
+
+
+def _curve_ok(cm: Optional[np.ndarray], cp: Optional[np.ndarray]) -> bool:
+    """A How-sure curve that can be read: margin knots and shares, as many of each (at least one), all finite, the
+    knots never falling, the shares between 0 and 1 and never falling (a wider margin is never less sure)."""
+    if cm is None or cp is None or np.ndim(cm) != 1 or np.ndim(cp) != 1 or len(cm) != len(cp) or not len(cm):
+        return False
+    return bool(np.all(np.isfinite(cm)) and np.all(np.isfinite(cp)) and np.all(np.diff(cm) >= 0)
+                and np.all((cp >= 0.0) & (cp <= 1.0)) and np.all(np.diff(cp) >= 0))
+
+
 def model_file(cfg: dict) -> str:
     """classifier.model_path, inside OpenDay/ unless it is an absolute path."""
     p = cfg["classifier"]["model_path"]
@@ -185,7 +219,10 @@ def model_file(cfg: dict) -> str:
 
 def load_model(cfg: dict, log=print) -> Optional[Model]:
     """The trained model the config names (classifier.kind, model_path), its tau set to classifier.model_tau. None
-    for kind m0, or when the file is missing or unreadable (logged; the nearest-centre rule m0 is used then)."""
+    for kind m0, or when the file is missing or unreadable (logged; the nearest-centre rule m0 is used then). Its
+    two-walk How sure curve (cal2_m / cal2_p, the second look's, fitted separately after training) is kept only when
+    it is well formed (_curve_ok); else it is dropped (logged) and an answer from both walks reads the one-walk
+    curve."""
     c = cfg["classifier"]
     if c.get("kind", "m0") == "m0":
         return None
@@ -196,7 +233,11 @@ def load_model(cfg: dict, log=print) -> Optional[Model]:
         log(f"model {p} not loaded ({exc}): using m0")
         return None
     m.tau = float(c.get("model_tau", m.tau))
-    log(f"model {m.kind} ({len(m.names)} features)")
+    if (m.cal2_m is not None or m.cal2_p is not None) and not _curve_ok(m.cal2_m, m.cal2_p):
+        log("model: its two-walk How sure curve (cal2_m / cal2_p) is not usable: the one-walk curve is read instead")
+        m.cal2_m = m.cal2_p = None
+    log(f"model {m.kind} ({len(m.names)} features" + ("; How sure from both walks: its own curve)"
+                                                       if m.cal2_m is not None else ")"))
     return m
 
 
@@ -268,6 +309,28 @@ def decide(m: Model, f: dict, pools: dict) -> Optional[Decision]:
         dd, mm = scores(sp, xs, es)
         d.speed_only = Decision(min(CLASSES, key=lambda k: dd[k]), float(mm), bool(mm < m.tau), dd, {})
     return d
+
+
+def average_walks(fs: Sequence[dict]) -> dict:
+    """Several walks' feature dicts as one, feature by feature: the second look (classifier.second_look) decides on
+    the average of the close call and the walk after it. A reading missing (NaN) in one walk takes the other's.
+    The readings the models compare on a log scale (LOG) are averaged on that scale, as the model sees them."""
+    out: dict = {}
+    for k in dict.fromkeys(k for f in fs for k in f):
+        vals = [f.get(k) for f in fs]
+        try:
+            v = np.array([np.nan if x is None else float(x) for x in vals], float)
+        except (TypeError, ValueError):                    # (not a number: the newest walk's)
+            out[k] = vals[-1]
+            continue
+        ok = np.isfinite(v) & ((v > 0) if k in LOG else True)
+        if not ok.any():
+            out[k] = float("nan")
+        elif k in LOG:
+            out[k] = float(np.exp(np.mean(np.log(v[ok]))))
+        else:
+            out[k] = float(np.mean(v[ok]))
+    return out
 
 
 def _pulls(m: Model, x: np.ndarray, enrol: dict) -> dict:

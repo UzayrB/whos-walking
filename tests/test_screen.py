@@ -446,6 +446,96 @@ def test_new_states_fit_on_screen(cfg, tmp_path, record, size):
         assert len(v) == 1
 
 
+def _tour_second_look(cfg, tmp_path, record):
+    """The round as shipped through the new states: Uzayr's third of five walks (five dots), a close call's "walk
+    once more", a cancelled second walk, Thinking on both walks, the answer from both walks (its tiles "Both walks";
+    noted, in a recording), a missed second walk, Redo my walks part-way ("Uzayr walks 4 more times")."""
+    from openday import models
+    from openday.app import AGAIN
+    close = models.Decision("visitor", 0.05, True, {}, {"speed": -0.3, "steps": 0.1, "swing": -0.2, "bounce": 0.0},
+                            why=["speed"])
+    clear = models.Decision("visitor", 0.25, False, {}, {"speed": -0.4, "steps": -0.1, "swing": -0.3, "bounce": 0.0},
+                            why=["speed", "leg swing"])
+    out = []
+    app = _app(cfg, tmp_path / f"s{record}", record=record)
+    _player(app, "Thandiwe Mokoena")
+    t = 100.0
+    while app._turn() == "visitor" or app.done["uzayr"] < 2:
+        _walk(app, t)
+        t += 20.0
+    out.append(("UZAYR walk 3 of 5", app, _now(app)))
+    t, _ = _learn(app, t)
+    app._decide = lambda f: close
+    _walk(app, t)
+    app._timers(app.timer + 0.01)
+    assert app.state == AGAIN
+    out.append(("WALK ONCE MORE", app, _now(app)))
+    app.on_key_now("space", t + 20.0)
+    out.append(("WALKING second look", app, app.view(t + 23.0)))
+    _type(app, ["backspace"])
+    out.append(("SECOND LOOK cancelled", app, app.view(time.monotonic())))
+    app._decide = lambda f: clear
+    _walk(app, t + 40.0)
+    out.append(("THINKING both walks", app, app.view(time.monotonic())))
+    app._timers(app.timer + 0.01)
+    out.append(("ANSWER from both walks", app, _now(app)))
+    if record:
+        _type(app, ["v"])
+        out.append(("ANSWER from both walks, noted", app, app.view(time.monotonic())))
+    app._decide = lambda f: close
+    _walk(app, t + 60.0)
+    app._timers(app.timer + 0.01)
+    _walk(app, t + 80.0, seen=False)
+    app._timers(app.timer + 0.01)
+    out.append(("SECOND LOOK missed", app, app.view(time.monotonic())))
+    app._timers(app.timer + 0.01)
+    _type(app, ["ctrl+u"])
+    _walk(app, t + 100.0)
+    out.append(("REDO 4 more times", app, _now(app)))
+    for name, ap, vm in out:
+        ap.screen.render(vm)
+    return out
+
+
+@pytest.mark.shipped
+@pytest.mark.parametrize("record", [False, True])
+@pytest.mark.parametrize("size", [(14.70, 9.24), (16, 9), (14.7, 9.56)])    # the MacBook full screen first
+def test_the_second_look_and_his_five_walks_fit_on_screen(cfg, tmp_path, record, size):
+    """"Walk once more!" (its headline as big as the card allows: full size at 16:9, one fit step on the MacBook)
+    over "Too close to call: the same walker again.", Thinking on both walks, the answer "(from both walks)" with its tiles' "Both walks", "Walk 3 of 5: to the X, then stand
+    still." with five dots, "Uzayr walks 4 more times": the card never talks to the operator, one bright button, the
+    operator's line two lines at full size clear of the buttons, nothing overlapping (tests/overlap.py) at the
+    MacBook's full screen."""
+    sizes: dict = {}
+    for name, app, vm in _tour_second_look(cfg, tmp_path, record):
+        for text in _cards(vm):
+            assert not any(w in text.lower() for w in FORBIDDEN), (name, text)
+        b = vm["buttons"]
+        assert [k for k, v in b.items() if v["look"] == "next"] in (["start_walk"], ["new_visitor"], []), (name, b)
+        _screen_checks(name, app, vm, size, sizes)
+        _hint_full_or_sentences(app, size, name)
+        sc = app.screen
+        sc.fig.set_dpi(DPI)
+        found = [p for p in overlap.check(sc) if p["kind"] != "d" or size == (14.70, 9.24)]
+        assert not found, name + "\n" + overlap.fmt(found)
+        if name == "WALK ONCE MORE":                       # the headline is the action, as big as the card allows
+            assert sc.big.get_text() == "Walk once more!"  # (full size on a 16:9 screen; on the MacBook's own,
+            steps = {(16, 9): 0, (14.70, 9.24): 1, (14.7, 9.56): 2}[size]   # 6 % too wide: one fit step, 0.92)
+            assert sc.big.get_fontsize() == pytest.approx(0.92 ** steps * screen.BIG_PT * size[1] / screen.BASE_H), size
+    for v in sizes.values():
+        assert len(v) == 1
+    vms = {n: vm for n, _a, vm in _tour_second_look(cfg, tmp_path / "again", record)}
+    card = {n: vm["card"] for n, vm in vms.items()}
+    assert card["UZAYR walk 3 of 5"]["sub"] == "Walk 3 of 5: to the X, then stand still."
+    assert len(card["UZAYR walk 3 of 5"]["dots"]["rows"][1][2]) == 5
+    assert (card["WALK ONCE MORE"]["big"], card["WALK ONCE MORE"]["sub"]) == ("Walk once more!",
+                                                                              "Too close to call: the same walker again.")
+    assert card["THINKING both walks"]["sub"] == "Comparing both walks with Uzayr's and Thandiwe Mokoena's"
+    assert card["ANSWER from both walks"]["sub"] == "(from both walks)"
+    assert all(t["bars"][0][0] == "Both walks" for t in vms["ANSWER from both walks"]["tiles"].values())
+    assert card["REDO 4 more times"]["sub"] == "Uzayr walks 4 more times, then the game carries on."
+
+
 def _hint_full_or_sentences(app, size, name):
     """Every hint at most two lines at full size, or (a test recording on a narrow screen) a whole sentence a
     line at most one step smaller (screen.HINT_SENTENCE_FIT)."""
@@ -808,7 +898,7 @@ COMMON = ["04_welcome", "05_name_box", "06_learning_lerato_turn", "07_walking_le
           "23_no_signal", "24_recording_learning", "25_recording_answer", "26_recording_noted", "27_recording_speed",
           "28_reuse_learning", "29_notice_reuse_got_it", "30_walks_expire_soon", "31_redo_my_walks",
           "32_notice_now_uzayr_walks", "33_notice_redo_undone", "34_notice_redo_back_to_game",
-          "35_notice_redo_next_player", "flow", "lights"]
+          "35_notice_redo_next_player", "36_walk_once_more", "37_answer_both_walks", "flow", "lights"]
 FIRST = ["01_setup", "02_measuring_countdown", "03_measuring"]
 
 

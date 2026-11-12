@@ -24,7 +24,9 @@ def _write_bin(path, frames):
     assert len(read_capture_file(path)[1]) == len(frames)
 
 
-def _run(cfg, d, walks, wid0):
+def _run(cfg, d, walks, wid0, seconds=None):
+    """seconds: {i: j}: walk i is the second look of walk j (classifier.second_look's "second_of")."""
+    seconds = seconds or {}
     st, ev = recordings.Stitcher(cfg), []
     idle = recordings.IdleSource("P4", 1)
     idle.take(st, 3.0)
@@ -32,7 +34,8 @@ def _run(cfg, d, walks, wid0):
     idle.take(st, 31.0)
     for i, (name, day, block, p, lab) in enumerate(walks):
         click = recordings.walk_piece(st, p, recordings.load_rx2(name, day, block), cfg)
-        ev.append({"kind": "walk", "id": wid0 + i, "t_click": click, "seen": True, "label": None, "f": None})
+        ev.append({"kind": "walk", "id": wid0 + i, "t_click": click, "seen": True, "label": None, "f": None,
+                   **({"second_of": wid0 + seconds[i]} if i in seconds else {})})
         if isinstance(lab, tuple):                                 # (label, source): the app's learning turns
             ev.append({"kind": "label", "walk_id": wid0 + i, "label": lab[0], "source": lab[1]})
         elif lab is not None:                                      # None: an unlabelled game walk (no event)
@@ -79,14 +82,21 @@ def test_bench_report_scores_the_shipped_model(cfg_shipped, tmp_path):
     uz, vi = S("P4", 1, "natural"), S("P3", 1, "natural")
     enrol = [x for pair in zip([(*w, "u") for w in uz[:5]], [(*w, "v") for w in vi[:5]]) for x in pair]
     tests = [x for pair in zip([(*w, "v") for w in vi[5:]], [(*w, "u") for w in uz[5:]]) for x in pair]
-    _run(cfg, str(tmp_path / "20261101-114500"), enrol + tests, 100)
+    # the first test walk a close call walked once more (the same walker: its pass again), as the app records it
+    walks_ = enrol + tests[:1] + [tests[0]] + tests[1:]
+    _run(cfg, str(tmp_path / "20261101-114500"), walks_, 100, seconds={len(enrol) + 1: len(enrol)})
     ws, _ = bench.bench_walks(cfg, str(tmp_path / "20261101-114500"))
     assert ws and all("leg_torso" in w["f"] for w in ws)
     assert np.mean([np.isfinite(w["f"]["leg_torso"]) for w in ws]) > 0.9
     cfg["eval"]["bench_tests"] = len(tests)
     out = bench.run_bench(cfg, str(tmp_path), log=lambda s: None)
     text = open(out).read()
-    assert f"shipped model {cfg['classifier']['kind']}" in text
+    k = cfg["classifier"]["kind"]
+    assert f"shipped model {k}" in text
+    assert f"tests: the {len(tests)} walks" in text                # (the second look took no test place)
+    assert "1 test walks were close calls walked once more, each scored on both walks averaged" in text
+    assert f"| (b) 2 + 5 (the app's round: the friend's 2, Uzayr's 5), shipped model {k} |" in text
+    assert f"| (b) 2 + 2 (the older round), shipped model {k} |" in text and "2 + 2 (the app's round)" not in text
     os.remove(out)
 
 
@@ -265,3 +275,99 @@ def test_bench_rounds_on_the_home_run_with_players():
     assert len(pools) == 19 and all(p["u"] and p["v"] for p in pools.values())
     assert {(tuple(p["u"]), tuple(p["v"])) for p in pools.values()} == {((12, 14, 16), (13, 15, 17)),
                                                                         ((34, 37, 39), (35, 36, 38, 40))}
+
+
+def test_bench_rebuilds_a_second_look_from_its_walks(cfg):
+    """bench.second_looks: a game walk with "second_of" and its close call, both labelled the same, decided again
+    against the pools they were decided on (bench_rounds) on the average of both walks, and the close call alone;
+    pairs whose pool walks or close call are missing, or labelled apart, are left out."""
+    names = cfg["features"]["names"]
+    rng = np.random.default_rng(3)
+
+    def w(i, label, x, purpose="test", pools=None, second_of=None):
+        f = dict(zip(names, x))
+        return {"id": i, "label": label, "f": f, "x": np.array(x, float), "purpose": purpose, "pools": pools,
+                "second_of": second_of}
+
+    u0, v0 = np.array([0.9, 105.0, 2.0, 0.30]), np.array([1.2, 120.0, 2.6, 0.45])
+    sd = np.array([0.03, 2.0, 0.05, 0.01])
+    ws = [w(i, "u", u0 + rng.normal(0, 1, 4) * sd, "enrol_uzayr") for i in (1, 2, 3)]
+    ws += [w(i, "v", v0 + rng.normal(0, 1, 4) * sd, "enrol_visitor") for i in (4, 5)]
+    pools = {"u": [1, 2, 3], "v": [4, 5]}
+    mid = (u0 + v0) / 2
+    ws += [w(6, "v", mid, pools=pools), w(7, "v", v0 + 0.2 * (v0 - u0), pools=pools, second_of=6),
+           w(8, "u", mid, pools=pools), w(9, "v", v0, pools=pools, second_of=8),          # labelled apart: out
+           w(10, "u", u0, pools={"u": [1, 99], "v": [4]}, second_of=6)]                   # a pool walk missing: out
+    out = bench.second_looks(cfg, ws)
+    assert [(x["first"], x["second"], x["label"], x["both"]) for x in out] == [(6, 7, "v", "visitor")]
+    from openday import models
+    both = models.average_walks([ws[5]["f"], ws[6]["f"]])
+    P = {"uzayr": np.array([x["x"] for x in ws[:3]]), "visitor": np.array([x["x"] for x in ws[3:5]])}
+    use = cfg["classifier"]["use"]
+    d = models.decide_m0(np.array([both[n] for n in use]), P, use, cfg)
+    assert out[0]["margin"] == pytest.approx(d.margin)
+
+
+def test_bench_rounds_link_a_second_look_to_its_close_call():
+    """A second look is a game walk with "second_of": the same pools as its close call, and the round says which."""
+    ev = [{"kind": "new_visitor", "index": 1},
+          {"kind": "walk", "id": 1, "purpose": "enrol_visitor", "seen": True, "label": "v"},
+          {"kind": "walk", "id": 2, "purpose": "enrol_uzayr", "seen": True, "label": "u"},
+          {"kind": "walk", "id": 3, "purpose": "test", "seen": True, "label": None, "second_look": True},
+          {"kind": "walk", "id": 4, "purpose": "test", "seen": True, "label": None, "second_of": 3},
+          {"kind": "label", "walk_id": 4, "label": "v", "counted": "right"},
+          {"kind": "label", "walk_id": 3, "label": "v", "counted": None, "both_with": 4}]
+    rounds, pools = bench.bench_rounds(ev)
+    assert rounds[0]["seconds"] == {4: 3} and rounds[0]["games"] == [3, 4]
+    assert pools[3] == pools[4] == {"u": [2], "v": [1]}
+
+
+def test_bench_check_lists_the_second_looks_only_when_there_are_some():
+    """bench-check's run summary names each second look (close call -> the walk after it); a recording without any
+    prints exactly what it did before."""
+    info = {"run": "r", "e0": [1.0], "probes": 0, "false": 0,
+            "rounds": [{"index": 1, "reused": [], "redo": False, "games": [3, 4], "seconds": {4: 3}}]}
+    lines: list = []
+    bench.print_run([], info, lines.append)
+    assert "player 1: second looks (close call -> the walk after it): 3 -> 4" in lines
+    plain: list = []
+    info["rounds"][0]["seconds"] = {}
+    bench.print_run([], info, plain.append)
+    assert not any("second look" in x for x in plain) and len(plain) == len(lines) - 1
+
+
+def test_bench_split_leaves_second_looks_out_and_scores_a_close_call_as_shown(cfg):
+    """eval --bench's split (bench.split_session): a second look ("second_of") takes no pool, test or matched place
+    of its own; bench.as_shown scores a test walk that was a close call walked once more (labelled the same, same
+    run) on both walks' readings averaged, as the round showed it; a pair labelled apart, or a walk of another run
+    with the same id, is not paired."""
+    names = cfg["features"]["names"]
+
+    def w(i, label, x, second_of=None, run="r1"):
+        return {"id": i, "label": label, "f": dict(zip(names, map(float, x))), "x": np.array(x, float),
+                "second_of": second_of, "run": run}
+
+    u, v = [0.9, 105.0, 2.0, 0.30], [1.2, 120.0, 2.6, 0.45]
+    post = [w(1, "v", v), w(2, "v", v), w(3, "u", u), w(4, "u", u),            # the pool, 2 + 2
+            w(5, "u", [1.1, 112.0, 2.3, 0.40]), w(6, "u", [0.7, 100.0, 1.9, 0.30], second_of=5),   # a close call, again
+            w(7, "v", v), w(8, "v", v),                                         # the other tests
+            w(9, "u", u), w(10, "v", v, second_of=9),                           # matched; a "second look" labelled apart
+            w(8, "v", [2.0, 150.0, 3.0, 0.6], second_of=8, run="r2")]          # another run's walk 8 (ids restart)
+    eu, ev_, tests, matched = bench.split_session(post, 2, 3)
+    assert [x["id"] for x in eu] == [3, 4] and [x["id"] for x in ev_] == [1, 2]
+    assert [x["id"] for x in tests] == [5, 7, 8] and [x["id"] for x in matched] == [9]
+    shown, n = bench.as_shown(cfg, tests, post)
+    assert n == 1 and [x["id"] for x in shown] == [5, 7, 8] and shown[0]["both_with"] == 6
+    from openday import models
+    both = models.average_walks([post[4]["f"], post[5]["f"]])
+    assert shown[0]["f"] == both and shown[0]["x"] == pytest.approx([both[k] for k in names])
+    assert shown[0]["x"][0] == pytest.approx(0.9) and tests[0]["x"][0] == pytest.approx(1.1)   # (the input untouched)
+    assert shown[1] is tests[1] and shown[2] is tests[2]
+    shown_m, n_m = bench.as_shown(cfg, matched, post)
+    assert n_m == 0 and shown_m[0] is matched[0]
+    old = [x for x in post if x["run"] == "r1"]                                # without second looks: as before
+    for x in old:
+        x["second_of"] = None
+    eu, ev_, tests, matched = bench.split_session(old, 2, 3)
+    assert [x["id"] for x in tests] == [5, 6, 7] and [x["id"] for x in matched] == [8, 9, 10]
+    assert bench.as_shown(cfg, tests, old) == (tests, 0)
