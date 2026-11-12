@@ -43,17 +43,18 @@ class WalkWindow:
     `t_arrive` is the time of the running maximum when it passes both arrival tests, else the last active column
     (None with no active column). The gait window closes there. e0 (the room's median energy) is
     threshold / dsp.active_k unless given. A rule whose key is 0 is off; `arrive=False` turns "arrived" off for
-    offline windows that already close at a known stop line.
+    offline windows that already close at a known stop line. `hold_s` replaces `arrive_hold_s` (the app's second,
+    screen-only window waits walk.screen_hold_s).
     """
 
     def __init__(self, cfg: dict, t_click: float, threshold: float, hop_s: float, e0: Optional[float] = None,
-                 arrive: bool = True) -> None:
+                 arrive: bool = True, hold_s: Optional[float] = None) -> None:
         w = cfg["walk"]
         self.t0, self.thr, self.hop_s = float(t_click), float(threshold), float(hop_s)
         self.min_active, self.quiet, self.max_s = float(w["min_active_s"]), float(w["quiet_s"]), float(w["max_s"])
         self.e0 = float(e0) if e0 is not None else self.thr / float(cfg["dsp"]["active_k"])
         self.arrive_x = float(w.get("arrive_min_x", 80.0)) if arrive else 0.0
-        self.arrive_hold = float(w.get("arrive_hold_s", 0.5))
+        self.arrive_hold = float(w.get("arrive_hold_s", 0.5)) if hold_s is None else float(hold_s)
         self.arrive_jump = float(w.get("arrive_jump_x", 4.0))
         self.give_up_s = float(w.get("give_up_s", 5.0))
         self.give_up_active = float(w.get("give_up_active_s", 0.3))

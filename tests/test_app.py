@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from matplotlib.backend_bases import MouseEvent
 
-from openday import bench, chain, models, screen
+from openday import bench, chain, models, screen, walks
 from openday.app import (App, RunLog, BUSY, DECIDING, ENROL_UZAYR, ENROL_VISITOR, IDLE, NAME_ENTRY, NEEDS_BASELINE,
                          READY, RESULT, WALKING)
 from openday.chain import Columns
@@ -589,7 +589,7 @@ def test_setup_next_measures_after_a_countdown(cfg, tmp_path):
     _capture_cols(app, 50.0 + d + 2.0, 50.0 + d + secs + 0.5, 1.0, 2)
     app._timers(time.monotonic())
     assert app.state == IDLE and app.chain.baseline is not None
-    assert app.view(time.monotonic())["hint"][0] == "Room measured."
+    assert app.view(time.monotonic())["hint"][0].startswith(f"Room level {app.chain.baseline.e0:.2f} (normal about")
     e0 = app.chain.baseline.e0
     app.on_key_now("ctrl+b", 200.0)                                # again, with the room busy (3x the energy)
     _capture_cols(app, 200.0, 200.0 + d + secs + 0.5, 3.0, 3)
@@ -1182,6 +1182,287 @@ def test_gait_window_closes_at_the_arrival(cfg, tmp_path, monkeypatch):
     assert got["t0"] == 0.0 and got["t1"] == w.t_arrive < arr["t"][arr["active"]].max()
     rec = app.walk_log[-1]
     assert rec["t_arrive"] == w.t_arrive and rec["t_end"] == w.t_end_col and rec["reason"] == "arrived"
+
+
+# ---- the screen's own wait (walk.screen_hold_s): the same walk and answer, shown a little later --------------------
+
+ARRIVE = list(np.geomspace(8.0, 400.0, 75)) + [100.0] * 60       # climbs to the X (peak at 3.9 s), then stands there
+CREEP = list(np.geomspace(8.0, 400.0, 75)) + [v for j in range(10) for v in [400.0 + 20 * (j + 1)] * 12]
+                                                                 # (... then a new small peak every 0.64 s)
+
+
+def _feed_to_answer(app, e, t0):
+    """The walk's columns one at a time until the model's window has ended (its answer made); returns the columns
+    not fed yet and the time of the next one."""
+    for i, x in enumerate(e):
+        _feed(app, [x], t0 + i * HOP)
+        if app.walk is None or app.walk["w"].ended:
+            return e[i + 1:], t0 + (i + 1) * HOP
+    return [], t0 + len(e) * HOP
+
+
+def _same_numbers(f, g):
+    return f.keys() == g.keys() and np.array_equal([f[k] for k in f], [g[k] for k in f], equal_nan=True)
+
+
+def test_screen_wait_keeps_the_walk_and_the_answer(cfg, tmp_path):
+    """The same columns with the screen's wait on (as shipped) and off: the model's window, its arrival, the numbers
+    and the answer (the real nearest-centre one) are the same; only the screen ends later."""
+    assert float(cfg["walk"]["screen_hold_s"]) > float(cfg["walk"]["arrive_hold_s"])
+    out = []
+    for hold in (cfg["walk"]["screen_hold_s"], 0.0):
+        cfg["walk"]["screen_hold_s"] = hold
+        app = _app(cfg, tmp_path / str(hold))
+        del app._decide                                            # (helpers._app's fixed answer)
+        t = _to_game(app)
+        app.on_key_now("space", t)
+        w = app.walk["w"]
+        _feed(app, ARRIVE, t)
+        assert app.walk is None and app.state == DECIDING
+        out.append((w, app.walk_log[-1]))
+    (w1, r1), (w0, r0) = out
+    assert (w1.reason, w1.t_end_col, w1.t_arrive, w1.n_active) == (w0.reason, w0.t_end_col, w0.t_arrive, w0.n_active)
+    for k, v in w1.arrays().items():
+        assert np.array_equal(v, w0.arrays()[k], equal_nan=True), k
+    for k in ("seen", "reason", "t_end", "t_end_dev", "t_arrive", "active_s"):
+        assert r1[k] == r0[k], k
+    assert _same_numbers(r1["f"], r0["f"])
+    d1, d0 = r1["decision"], r0["decision"]
+    assert (d1.label, d1.margin, d1.not_sure, d1.contrib) == (d0.label, d0.margin, d0.not_sure, d0.contrib)
+    assert r1["reason"] == "arrived" and r0["screen_t_end"] == r0["t_end"] < r1["screen_t_end"]
+
+
+def test_screen_ends_after_the_walk_and_at_most_the_extra_wait_later(cfg, tmp_path):
+    """The screen ends no sooner than the model's window and at most walk.screen_max_extra_s after it: standing
+    still, screen_hold_s after the peak; with new small peaks all along, at the cap."""
+    hold, extra = float(cfg["walk"]["screen_hold_s"]), float(cfg["walk"]["screen_max_extra_s"])
+    app = _app(cfg, tmp_path)
+    for i, e in enumerate((ARRIVE, CREEP)):
+        t = 100.0 + 20 * i
+        app.on_key_now("space", t)
+        _feed(app, e, t)
+        assert app.walk is None
+        r = app.walk_log[-1]
+        assert r["reason"] == "arrived" and r["t_end"] <= r["screen_t_end"] <= r["t_end"] + extra
+        assert app.last_end_dev == pytest.approx(t + r["screen_t_end"])   # the after-end lock counts from there
+    still, creep = app.walk_log[-2:]
+    assert hold <= still["screen_t_end"] - still["t_arrive"] < hold + HOP
+    assert creep["screen_t_end"] >= creep["t_end"] + extra - HOP
+
+
+def test_they_have_stopped_during_the_screen_wait_shows_the_answer_at_once(cfg, tmp_path):
+    app = _app(cfg, tmp_path, record=True)
+    t = _to_game(app)
+    app.on_key_now("space", t)
+    rest, t_next = _feed_to_answer(app, ARRIVE, t)
+    _feed(app, rest[:3], t_next)                                   # the answer is made; the screen still waits
+    assert app.state == WALKING and app.walk["w"].reason == "arrived"
+    vm = app.view(time.monotonic())
+    assert vm["card"]["big"] == "Walk to the X" and vm["buttons"]["start_walk"]["label"] == "They've stopped"
+    press = t_next + 3 * HOP + 0.05
+    app.on_key_now("space", press)                                 # They've stopped
+    assert app.walk is None and app.state == DECIDING
+    r = app.walk_log[-1]
+    assert r["reason"] == "arrived" and r["t_end"] < r["screen_t_end"] == pytest.approx(press - t)
+    assert app.last_end_dev == press
+    ev = [e for e in _events(tmp_path) if e.get("id") == r["id"] or e.get("walk_id") == r["id"]]
+    assert [e["kind"] for e in ev] == ["walk"]                     # (no stop event: the walk itself was whole)
+
+
+def test_cancel_walk_during_the_screen_wait_throws_the_walk_away(cfg, tmp_path):
+    """Cancel walk while the screen still waits: as a cancel during the walk. Nothing counted, no answer, and
+    the same events (a discard, no walk event); a learning turn is walked again."""
+    app = _app(cfg, tmp_path, record=True)
+    _player(app)
+    app.on_key_now("space", 100.0)
+    _feed_to_answer(app, ARRIVE, 100.0)
+    assert app.state == WALKING and app.walk["w"].ended
+    wid = app.walk["id"]
+    _type(app, ["backspace"])                                      # Cancel walk
+    assert app.walk is None and app.state == ENROL_VISITOR and app.done == {"uzayr": 0, "visitor": 0}
+    assert len(app.visitor) == 0 and app.walk_log == [] and app.last is None
+    assert app.view(time.monotonic())["card"]["sub"] == "Walk cancelled. Same turn again."
+    t = _to_game_rest(app, 120.0)                                  # then into the game
+    last = app.last
+    app.on_key_now("space", t)
+    _feed_to_answer(app, ARRIVE, t)
+    assert app.state == WALKING and app.walk["w"].ended
+    gid = app.walk["id"]
+    _type(app, ["pageup"])                                         # (the clicker's back key cancels it too)
+    assert app.walk is None and app.state == READY and app.last is last
+    kinds = {i: [e["kind"] for e in _events(tmp_path) if e.get("id") == i or e.get("walk_id") == i]
+             for i in (wid, gid)}
+    assert kinds == {wid: ["discard"], gid: ["discard"]}
+
+
+@pytest.mark.parametrize("hold", [None, 0.0, 0.5])
+def test_screen_wait_off_ends_the_walk_on_screen_with_the_model(cfg, tmp_path, hold):
+    """walk.screen_hold_s absent, 0 or no longer than arrive_hold_s: no screen window, and the walk ends on screen
+    on the very column the model's window ends on, as before the screen wait."""
+    if hold is None:
+        del cfg["walk"]["screen_hold_s"]
+    else:
+        cfg["walk"]["screen_hold_s"] = hold
+    app = _app(cfg, tmp_path, record=True)
+    app.on_key_now("space", 100.0)
+    assert app.walk["screen"] is None
+    w = app.walk["w"]
+    _feed_to_answer(app, ARRIVE, 100.0)
+    assert app.walk is None and w.reason == "arrived"
+    r = app.walk_log[-1]
+    assert r["screen_t_end"] == r["t_end"] and app.last_end_dev == w.t_end_col == r["t_end_dev"]
+    assert [e for e in _events(tmp_path) if e["kind"] == "walk"][-1]["screen_t_end"] == r["t_end"]
+
+
+def test_walk_event_keeps_the_models_end(cfg, tmp_path):
+    """The walk event of a walk the screen waited for: reason, t_end, t_arrive and the numbers are the model's
+    window (what the bench tools re-run and compare with), plus screen_t_end."""
+    app = _app(cfg, tmp_path, record=True)
+    app.on_key_now("space", 100.0)
+    _feed(app, ARRIVE, 100.0)
+    ev = [e for e in _events(tmp_path) if e["kind"] == "walk"]
+    assert len(ev) == 1
+    e = ev[0]
+    w = walks.WalkWindow(cfg, 100.0, float(cfg["dsp"]["active_k"]), HOP)   # the model's window on its own
+    w.add(cols(ARRIVE, 100.0))
+    assert e["reason"] == w.reason == "arrived" and e["t_end_dev"] == w.t_end_col
+    assert e["t_end"] == w.t_end_col - 100.0 and e["t_arrive"] == w.t_arrive - 100.0
+    assert e["active_s"] == w.active_s
+    f = walks.walk_features(w.arrays(), HOP, cfg)
+    assert all(e["f"][k] == f[k] for k in f)
+    assert e["screen_t_end"] > e["t_end"]
+    assert set(e) == {"kind", "id", "purpose", "t_click", "t_dev", "seen", "reason", "f", "label", "active_s",
+                      "t_end_dev", "t_end", "t_arrive", "screen_t_end"}
+
+
+def test_signal_lost_during_the_screen_wait_still_shows_the_answer(cfg, tmp_path):
+    """The answer was made before the signal went: a lost signal, or no more columns, during the screen's wait
+    shows it instead of dropping a whole walk."""
+    for how in ("lost", "no columns"):
+        d = tmp_path / how.replace(" ", "_")
+        d.mkdir()
+        app = _app(cfg, d, record=True)
+        app.on_key_now("space", 100.0)
+        _feed_to_answer(app, ARRIVE, 100.0)
+        assert app.state == WALKING
+        if how == "lost":
+            app._abort("Signal lost")
+        else:
+            app._timers(100.0 + float(cfg["walk"]["max_s"]) + float(cfg["walk"]["guard_s"]) + 0.1)
+        assert app.walk is None and app.walk_log[-1]["reason"] == "arrived"
+        kinds = [e["kind"] for e in _events(d)]
+        assert "walk" in kinds and "discard" not in kinds
+
+
+@pytest.mark.parametrize("after", [-HOP / 2, 0.3])
+def test_they_have_stopped_before_the_walk_ends_shows_the_answer_with_it(cfg, tmp_path, after):
+    """They've stopped pressed while the walk is still open, for a moment its columns have not reached yet. The walk
+    then ends "arrived" (on the press's own column, or just before the press): the screen does not wait, and the
+    after-end lock counts from the press (or from the walk's end, when that is later)."""
+    t = 100.0
+    alone = walks.WalkWindow(cfg, t, float(cfg["dsp"]["active_k"]), HOP)   # where the model's window ends
+    alone.add(cols(ARRIVE, t))
+    end, n = alone.t_end_col, len(alone.t) - 1                     # (ARRIVE[n] is the column that ends it)
+    press = end + after
+    app = _app(cfg, tmp_path, record=True)
+    app.on_key_now("space", t)
+    _feed(app, ARRIVE[:n], t)
+    app.on_key_now("space", press)                                 # They've stopped: taken, its column not in yet
+    assert app.state == WALKING and app.walk["w"].t_stop == app.walk["screen"].t_stop == press
+    _feed(app, ARRIVE[n:n + 1], end)
+    assert app.walk is None and app.state == IDLE                  # shown on the column that ended the walk
+    r = app.walk_log[-1]
+    assert r["reason"] == "arrived" and r["t_end_dev"] == end and r["t_arrive"] == alone.t_arrive - t
+    assert app.last_end_dev == max(press, end) and r["screen_t_end"] == pytest.approx(max(press, end) - t)
+    kinds = [e["kind"] for e in _events(tmp_path) if e.get("id") == r["id"] or e.get("walk_id") == r["id"]]
+    assert kinds == ["stop", "walk"]
+
+
+@pytest.mark.parametrize("fails", ["the numbers", "the answer"])
+def test_a_fault_in_the_answer_drops_the_walk_at_once(cfg, tmp_path, monkeypatch, fails):
+    """An error while the walk's numbers or its answer are made: the walk is dropped at once, as before the screen
+    wait (tick logs the error), and the screen goes back to resting; it never waits on Walk to the X."""
+    app = _app(cfg, tmp_path, record=True)
+    t = _to_game(app)
+
+    def broken(*a, **k):
+        raise RuntimeError("broken")
+
+    if fails == "the numbers":
+        monkeypatch.setattr(walks, "walk_features", broken)
+    else:
+        app._decide = broken
+    app.on_key_now("space", t)
+    wid = app.walk["id"]
+    with pytest.raises(RuntimeError):
+        _feed(app, ARRIVE, t)
+    assert app.walk is None
+    app._timers(time.monotonic())
+    assert app.state == READY
+    assert not [e for e in _events(tmp_path) if e.get("id") == wid or e.get("walk_id") == wid]
+
+
+def test_quit_during_the_screen_wait_still_records_the_walk(cfg, tmp_path):
+    """Quit while only the screen still waits: the answer is made, so the walk is logged and recorded as any walk
+    before the files close. A walk still going on is dropped on quit, as always."""
+    log = tmp_path / "run.log"
+    app = _app(cfg, tmp_path, record=True, log=str(log))
+    t = _to_game(app)
+    app.on_key_now("space", t)
+    _feed_to_answer(app, ARRIVE, t)
+    assert app.state == WALKING and app.walk["w"].ended
+    wid = app.walk["id"]
+    app.close()
+    ev = [e for e in _events(tmp_path) if e.get("id") == wid or e.get("walk_id") == wid]
+    assert [e["kind"] for e in ev] == ["walk"]
+    assert ev[0]["reason"] == "arrived" and ev[0]["decision"]["label"] == "visitor"   # (helpers._app's answer)
+    lines = open(log).read().splitlines()
+    assert f"walk {wid} test seen ended arrived" in lines[-2] and lines[-1].endswith(" quit")
+    d = tmp_path / "going"
+    d.mkdir()
+    app = _app(cfg, d, record=True)
+    app.on_key_now("space", 100.0)
+    _feed(app, ARRIVE[:40], 100.0)                                 # still walking
+    wid = app.walk["id"]
+    app.close()
+    assert not [e for e in _events(d) if e.get("id") == wid or e.get("walk_id") == wid]
+
+
+def test_screen_wait_ends_when_the_columns_stop(cfg, tmp_path):
+    """No columns after the answer was made (the packets stopped): the screen does not wait for the walk's own guard
+    (walk.max_s + guard_s after the click). It shows the answer screen_max_extra_s + guard_s after it was made."""
+    wc = cfg["walk"]
+    app = _app(cfg, tmp_path, record=True)
+    t = time.monotonic()                                           # (host time = device time here)
+    app.on_key_now("space", t)
+    _feed_to_answer(app, ARRIVE, t)
+    made = time.monotonic()                                        # (the answer was made between t and now)
+    assert app.state == WALKING and app.walk["w"].ended
+    wait = float(wc["screen_max_extra_s"]) + float(wc["guard_s"])
+    assert made + wait + 0.1 - t < float(wc["max_s"]) + float(wc["guard_s"])
+    app._timers(t + wait - 0.1)
+    assert app.state == WALKING
+    app._timers(made + wait + 0.1)
+    assert app.walk is None and app.state == IDLE and app.walk_log[-1]["reason"] == "arrived"
+    assert [e["kind"] for e in _events(tmp_path)].count("walk") == 1
+
+
+@pytest.mark.parametrize("hold", [0.0, 1.0])
+def test_a_no_signal_walk_logs_as_before_the_screen_wait(cfg, tmp_path, hold):
+    """A walk closed for "no signal" (no columns past walk.max_s + guard_s) ends on screen with the model: no
+    end time (t_end and screen_t_end None) and no "on screen" in the run log, with the screen's wait off or on."""
+    cfg["walk"]["screen_hold_s"] = hold
+    log = tmp_path / "run.log"
+    app = _app(cfg, tmp_path, record=True, log=str(log))
+    app.on_key_now("space", 100.0)
+    _feed(app, [30.0] * 40, 100.0)                                 # seen, still walking, then nothing more comes
+    app._timers(100.0 + float(cfg["walk"]["max_s"]) + float(cfg["walk"]["guard_s"]) + 0.1)
+    assert app.walk is None
+    r = app.walk_log[-1]
+    assert r["seen"] and r["reason"] == "no signal" and r["t_end"] is None and r["screen_t_end"] is None
+    line = [x for x in open(log) if f"walk {r['id']} free seen ended no signal" in x]
+    assert len(line) == 1 and "on screen" not in line[0]
+    assert [e for e in _events(tmp_path) if e["kind"] == "walk"][-1]["screen_t_end"] is None
 
 
 # ---- the 3D picture in the app: fed by the packets, display only, a fault never stops the show -----------------------

@@ -72,8 +72,8 @@ def _type(app, keys, t=0.0):
 
 def _feed(app, e, t0):
     """Columns into the running walk, as _process does."""
-    if app.walk is not None and app.walk["w"].add(cols(e, t0)):
-        app._walk_ended()
+    if app.walk is not None:
+        app._feed_walk(cols(e, t0))
 
 
 SEEN = [30.0] * 60 + [1.0] * 20                                  # 3.2 s of walking, then still: ends "stopped"

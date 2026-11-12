@@ -48,16 +48,21 @@ walk:                          # a walk ends on the first of: stopped, arrived, 
   arrive_hold_s: 0.5           # ... median energy (e0), no new peak for this long; the peak is the arrival (t_arrive)
   arrive_jump_x: 4.0           # ... and the peak is at least this x the walk's median energy so far (0 = off): a bump
                                # in the middle of a walk does not end it, the jump at the X does
+  screen_hold_s: 1.0           # the screen waits longer than the walk: after "arrived" it shows the answer only once
+                               # there has been no new peak for this long; the walk and its answer stay the same (they
+                               # still end at arrive_hold_s). 0.5 or less: the old timing
+  screen_max_extra_s: 1.5      # ... and never more than this after the walk's own end
   stop_min_s: 1.5              # "operator": a stop request sooner than this after the click is a double press
   give_up_s: 5.0               # "nothing": this long after the click with ...
   give_up_active_s: 0.3        # ... less than this active: not seen, end now (0 = off)
   max_s: 9.0                   # "limit": hard limit after the click
   after_end_lock_s: 3.0        # a start this soon after a walk ended is ignored (device time) and the main button
-                               # is drawn grey: a late They've stopped click (the walk ended by itself about 0.5 s
+                               # is drawn grey: a late They've stopped click (the walk ended by itself about 1 s
                                # after the stop) starts nothing; going back 3 m takes longer
   active_smooth: 5             # causal running median of energy over this many columns before thresholding
   preclick_cols: 40            # columns kept so a new walk starts with its pre-click history (about 2 s)
-  guard_s: 2.0                 # a walk (or baseline) with no columns this long past its end is closed anyway
+  guard_s: 2.0                 # a walk (or baseline, or the screen's wait) with no columns this long past its end is
+                               # closed anyway
 
 features:
   names: [speed, steps, swing, bounce]
@@ -105,6 +110,8 @@ baseline:
   min_cols: 20                 # fewer columns than this and the baseline is refused
   delay_s: 5.0                 # Measure room counts down this long (time to step back) before measuring
   recheck_ratio: 1.3           # a measurement this many times the run's quietest asks to measure again
+  normal_e0: 0.8               # a still room at home measures about this (shown beside each new measurement)
+  busy_e0: 1.1                 # above this, someone probably moved while measuring: asks to measure again
 
 health:
   busy_window_s: 1.0

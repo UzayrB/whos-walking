@@ -63,6 +63,22 @@ def test_walk_ends_on_arrival(cfg):
     assert w.peaked and w.peak >= float(cfg["walk"]["arrive_min_x"])
 
 
+def test_a_longer_hold_only_ends_later(cfg):
+    """hold_s (the app's screen window: walk.screen_hold_s) only moves the end: the same arrival, and the same
+    columns up to the shorter window's end."""
+    k = float(cfg["dsp"]["active_k"])
+    e = list(np.geomspace(8.0, 400.0, 75)) + [100.0] * 60
+    short, long = (WalkWindow(cfg, 0.0, k, HOP, e0=1.0, hold_s=h) for h in (None, 1.0))
+    for w in (short, long):
+        w.add(cols(e))
+    assert short.arrive_hold == float(cfg["walk"]["arrive_hold_s"]) and long.arrive_hold == 1.0
+    assert short.reason == long.reason == "arrived" and short.t_arrive == long.t_arrive
+    assert 1.0 <= long.t_end_col - long.t_arrive < 1.0 + HOP
+    n = len(short.t)
+    for key, v in short.arrays().items():
+        assert np.array_equal(v, long.arrays()[key][:n], equal_nan=True), key
+
+
 def test_arrival_needs_the_level(cfg):
     w, _ = _arrive_walk(cfg, top=60.0, flat=50.0)                  # peaks below arrive_min_x (80) x e0
     assert w.reason == "limit" and not w.peaked

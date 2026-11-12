@@ -234,9 +234,7 @@ def walk(a: App, f: Optional[tuple], decision: Optional[models.Decision] = None,
     if decision is not None:
         a._decide = lambda feats, d=decision: d
     start(a, ago)
-    wk = a.walk
-    if wk["w"].add(_columns(a, wk["t_dev"], f)):
-        a._walk_ended()
+    a._feed_walk(_columns(a, a.walk["t_dev"], f))
     assert a.walk is None, "the synthetic walk did not end"
 
 
@@ -412,8 +410,8 @@ def _main_path(sh: _Shots) -> None:
     start(a, ago=3.0)
     echo(a, "walking", speed=f0[0])
     sh.shot(a, "07_walking_learning")
-    a.walk["w"].add(_columns(a, a.walk["t_dev"], f0))
-    a._walk_ended()
+    a._feed_walk(_columns(a, a.walk["t_dev"], f0))
+    assert a.walk is None, "the synthetic walk did not end"
     sh.act()
     echo(a, "walked", speed=f0[0])
     sh.shot(a, "08_notice_got_it", notice=True)

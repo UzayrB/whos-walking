@@ -80,9 +80,9 @@ To stop the app, click **Quit** (top right), then **Yes, quit**.
 | 3 | <img src="reports/screens/05_name_box.png" width="320"> | the visitor types, then **OK** | Their first name, then OK or Enter. No name gives "Guest". Names are never saved. **Cancel** goes back. |
 | 4 | <img src="reports/screens/06_learning_lerato_turn.png" width="320"> | **Start walk**, twice | The visitor walks first, twice. The card says whose turn it is, and the dots fill in (top row them, bottom row you). After the first walk: "Got it! Once more."; after the second: "Got it! Now Uzayr walks twice." (or the game, when your walks are kept). Nothing else to click: each walk goes to whoever's turn it was. If the wrong person walked, click **Undo walk** and that turn is walked again. |
 | 5 | <img src="reports/screens/09_learning_uzayr_turn.png" width="320"> | **Start walk**, twice (you walk) | Then your two walks: click **Start walk** and walk to the X yourself. **Skipped** when your walks from an earlier round are under 25 minutes old (below): then the game starts right after the visitor's two walks ([picture](reports/screens/28_reuse_learning.png): your row of dots is already full). |
-| 6 | <img src="reports/screens/07_walking_learning.png" width="320"> | nothing (or **They've stopped**) | The walker goes to the X and stands still. The walk ends by itself about half a second after they stop. You can click **They've stopped** once they stand on the X, but you don't need to. A click that comes after the walk has already ended does nothing: the big button stays grey for 3 s after every walk. |
+| 6 | <img src="reports/screens/07_walking_learning.png" width="320"> | nothing (or **They've stopped**) | The walker goes to the X and stands still. The walk ends by itself under two seconds after they stop. You can click **They've stopped** once they stand on the X, but you don't need to. A click that comes after the walk has already ended does nothing: the big button stays grey for 3 s after every walk. |
 | 7 | <img src="reports/screens/14_game.png" width="320"> | **Start walk** | After the last learning walk: "Got you both! Now the guessing game." (or "Got it! Now the guessing game." when your walks were kept). You **or** the visitor walks; the crowd can choose. |
-| 8 | <img src="reports/screens/17_answer_lerato.png" width="320"> | **Next walk** | About a second after they stop: who it was, "How sure", and what told you apart ("Told apart by: speed and leg swing"). The tiles say which person each reading was "like". Nothing to click but **Next walk**: the visitors can see for themselves whether the guess was right. There is no score on screen. |
+| 8 | <img src="reports/screens/17_answer_lerato.png" width="320"> | **Next walk** | Under two seconds after they stop: who it was, "How sure", and what told you apart ("Told apart by: speed and leg swing"). The tiles say which person each reading was "like". Nothing to click but **Next walk**: the visitors can see for themselves whether the guess was right. There is no score on screen. |
 | 9 | <img src="reports/screens/19_close_call.png" width="320"> | **Next walk** | A close call: it still names someone (whoever the walk was nearer to), and "How sure" is just lower. |
 
 When the visitor is done, **New player** starts the next one: the name box, then their two walks (and yours, if
@@ -291,7 +291,10 @@ little over the previous model.
 **How a walk ends.** A walk is one click to the moment the walker stops; the standing still before and after
 is left out. It ends on the first of: "arrived" (the echo has peaked as the walker reached the X and stopped
 climbing for 0.5 s: about half a second after they stop), "stopped" (0.5 s of quiet), "operator" (They've
-stopped), "nothing" (5 s with almost no movement: Missed) or "limit" (9 s). The run log gives each walk's
+stopped), "nothing" (5 s with almost no movement: Missed) or "limit" (9 s). After "arrived" the screen alone
+waits a little longer, until the echo has made no new peak for 1 s (`walk.screen_hold_s`; at most 1.5 s more,
+`walk.screen_max_extra_s`); the walk the model reads, and so its answer, stay exactly the same (`screen_hold_s:
+0.5` gives the old timing). The run log gives each walk's
 ending and its arrival time. On 12 stopwatch-timed home walks it found the stop within 0.27 s (middle value),
 and its speed was within 0.06 m/s of distance ÷ time on average.
 

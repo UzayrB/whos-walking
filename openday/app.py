@@ -217,6 +217,11 @@ class App:
         if self.closed:
             return
         self.closed = True
+        if self.walk is not None and "rec" in self.walk:   # its answer is made and only the screen still waited:
+            try:                                           # logged and recorded as any walk, before the files close
+                self._walk_shown()
+            except Exception as exc:                       # (a quit must always close the files and the screen)
+                self.log(f"quit: the last walk could not be recorded ({exc})")
         self.wipe_visitor()                                # (it retires the last walk itself)
         self._drop_uzayr()
         self.uz_held = None
@@ -235,9 +240,9 @@ class App:
         cols = self.chain.push(lt, tm, data)
         if (self.chain.reboots, self.chain.silences) != (r0, s0):   # rebooted or silent: start clean
             self.recent.clear()
+            self._abort("Receiver restarted" if self.chain.reboots != r0 else "Signal lost")
             if self.chain.reboots != r0:                   # the device clock starts a new epoch
                 self.last_end_dev = None
-            self._abort("Receiver restarted" if self.chain.reboots != r0 else "Signal lost")
             self.ridge.reset()
             self.ridge_cols = 0                            # (the waterfall's older columns aren't theirs)
         try:                                               # this batch's samples before the high-pass (display
@@ -263,11 +268,13 @@ class App:
                 self.ring.append((np.zeros(self.n_bins, np.float32), np.nan, 0.0))
                 self.ridge_cols += 1
         if self.walk is not None and base is not None:
-            if self.walk["w"].add(cols):
-                self._walk_ended()
+            self._feed_walk(cols)
 
     def _abort(self, why: str) -> None:
-        """A walk or a baseline capture cannot finish (receiver restarted or silent): drop it, say so."""
+        """A walk or a baseline capture cannot finish (receiver restarted or silent): drop it, say so. A walk whose
+        answer was already made (only the screen was still waiting, walk.screen_hold_s) is shown instead."""
+        if self.walk is not None and self.walk["w"].ended:
+            self._walk_shown()
         if self.walk is not None:
             self.log(f"walk {self.walk['id']} dropped: {why.lower()}")
             self._event("discard", walk_id=self.walk["id"], t_mono=time.monotonic(), why=why)
@@ -652,7 +659,15 @@ class App:
         self.state = self.prev if self.prev not in (NEEDS_BASELINE, BUSY, NAME_ENTRY) else IDLE
         self.state = self._resting() if self.state in (IDLE, READY) else self.state
         self.quiet_e0 = b.e0 if self.quiet_e0 is None else min(self.quiet_e0, b.e0)
-        self._hint("Using the last measurement." if how == "reused" else "Room measured.", "green")
+        if how == "captured":                              # the number, beside a still room's, so a busy one shows
+            normal, busy = (float(self.cfg["baseline"].get(k, d)) for k, d in (("normal_e0", 0.8), ("busy_e0", 1.1)))
+            text = f"Room level {b.e0:.2f} (normal about {normal:.1f})."
+            if b.e0 > busy:
+                self._hint(text + " Someone moved? Measure room again.", "amber", 20.0, light="Measure the room again")
+            else:
+                self._hint(text, "green", 8.0)
+        else:
+            self._hint("Using the last measurement.", "green")
 
     def _load_cached_baseline(self) -> Optional[chain.Baseline]:
         if not self.baseline_path or not os.path.exists(self.baseline_path):
@@ -728,10 +743,17 @@ class App:
         else:
             purpose = "free"
         thr = float(self.cfg["dsp"]["active_k"]) * self.chain.baseline.e0
-        w = walks.WalkWindow(self.cfg, t_dev, thr, self.hop_s)
-        w.add(self._recent_columns())
+        w = walks.WalkWindow(self.cfg, t_dev, thr, self.hop_s)    # the model's window: the walk and its answer
+        hold = float(self.cfg["walk"].get("screen_hold_s", 0.0) or 0.0)
+        sw = None                                          # the screen's window: the same columns, a longer hold
+        if hold > w.arrive_hold:                           # (walk.screen_hold_s; else the screen ends with the answer)
+            sw = walks.WalkWindow(self.cfg, t_dev, thr, self.hop_s, hold_s=hold)
+        pre = self._recent_columns()
+        w.add(pre)
+        if sw is not None:
+            sw.add(pre)
         self.n_walks += 1
-        self.walk = {"w": w, "purpose": purpose, "t_click": t, "t_dev": t_dev, "from": self.state,
+        self.walk = {"w": w, "screen": sw, "purpose": purpose, "t_click": t, "t_dev": t_dev, "from": self.state,
                      "id": self.n_walks}
         self.prev, self.state = self._resting() if self.state in (RESULT, DECIDING) else self.state, WALKING
         self.log(f"walk {self.walk['id']} start {purpose}")
@@ -741,35 +763,85 @@ class App:
 
     def request_stop(self, t: float) -> bool:
         """The operator says the walker has stopped (host time t): the walk ends "operator" on the first column at or
-        after that moment. Under walk.stop_min_s after the click it is a double press and is ignored (False)."""
+        after that moment. Under walk.stop_min_s after the click it is a double press and is ignored (False). When
+        the answer is already made and only the screen is still waiting (walk.screen_hold_s), it shows it now."""
         if self.state != WALKING or self.walk is None:
             return False
         t_dev = self.chain.to_device(t)
         wk = self.walk
+        if t_dev is not None and wk["w"].ended:            # (the walk itself is already whole: nothing to stop)
+            self.log(f"walk {wk['id']} stop pressed at {t_dev - wk['t_dev']:.1f} s, after its end")
+            self._walk_shown(max(t_dev, wk["w"].t_end_col))
+            return True
         if t_dev is None or not wk["w"].request_stop(t_dev):
             return False
+        if wk.get("screen") is not None:                   # (the screen's window stops there too)
+            wk["screen"].request_stop(t_dev)
         self.log(f"walk {wk['id']} stop pressed at {t_dev - wk['t_dev']:.1f} s")
         self._event("stop", walk_id=wk["id"], t_mono=t, t_dev=t_dev)
         if wk["w"].ended:
             self._walk_ended()
         return True
 
+    def _feed_walk(self, cols: chain.Columns) -> None:
+        """New columns into the running walk: first the model's window (its end makes the answer: _walk_ended), then
+        the screen's (its end shows it: _walk_shown), which waits at most walk.screen_max_extra_s past the model's."""
+        wk = self.walk
+        w, sw = wk["w"], wk.get("screen")
+        if not w.ended and w.add(cols):
+            self._walk_ended()
+        if sw is None or self.walk is not wk:              # (no screen window, or the walk is already shown)
+            return
+        if w.ended:
+            # the screen waits at most walk.screen_max_extra_s past the model's end: its window's own "limit" rule
+            # then ends it on its last column inside that
+            extra = float(self.cfg["walk"].get("screen_max_extra_s", 1.5))
+            sw.max_s = min(sw.max_s, w.t_end_col - sw.t0 + max(extra - self.hop_s, 0.0))
+        if sw.add(cols):
+            self._walk_shown()
+
     def _walk_ended(self) -> None:
-        wk, self.walk = self.walk, None
-        w: walks.WalkWindow = wk["w"]
+        """The model's window has ended: the walk's numbers and the answer, made now as always, and kept on the walk.
+        The screen shows them now (_walk_shown), unless the walk "arrived" by itself and the screen's own window (a
+        longer hold, walk.screen_hold_s) is still waiting. Every other end (stopped, operator, nothing, limit, no
+        signal) shows at once, and so does an arrival after They've stopped was pressed."""
+        wk, self.walk = self.walk, None                    # (if the numbers or the answer fail, the walk is dropped at
+        w: walks.WalkWindow = wk["w"]                      # once, as before the screen wait: tick logs the error)
         arr = w.arrays()
         f = walks.walk_features(arr, self.hop_s, self.cfg) if w.seen else None
         if f is not None:                                  # the single-link gait set, from the click to the arrival
             t_arr = float(w.t_arrive)
             f.update(walks.walk_gait(*self.chain.raw.window(wk["t_dev"], t_arr), wk["t_dev"], t_arr, self.cfg))
-        self.last_end_dev = w.t_end_col if w.t_end_col is not None else (w.t[-1] if w.t else wk["t_dev"])
-        self.last_end_wall = time.monotonic()
         rel = lambda x: float(x - wk["t_dev"]) if x is not None else None  # noqa: E731
         rec = {"id": wk["id"], "purpose": wk["purpose"], "t_click": wk["t_click"], "t_dev": wk["t_dev"],
-               "t_end_wall": time.monotonic(), "seen": f is not None, "reason": w.reason, "f": f,
+               "t_end_wall": None, "seen": f is not None, "reason": w.reason, "f": f,
                "label": None, "decision": None, "pool": None, "entry": None,
                "active_s": w.active_s, "t_end_dev": w.t_end_col, "t_end": rel(w.t_end_col),
-               "t_arrive": rel(w.t_arrive)}
+               "t_arrive": rel(w.t_arrive), "screen_t_end": None}
+        if f is not None and wk["purpose"] == "test":      # (the pools can't change while a walk is on screen)
+            rec["decision"] = self._decide(f)
+        wk["rec"] = rec
+        wk["end_dev"] = w.t_end_col if w.t_end_col is not None else (w.t[-1] if w.t else wk["t_dev"])  # model's end
+        wk["ended_at"] = time.monotonic()                  # (host time: _timers shows it if the columns stop coming)
+        self.walk = wk                                     # (back on: shown below, or when the screen's wait ends)
+        if wk.get("screen") is None or w.reason != "arrived":   # shown now, ending where the model's window ended
+            self._walk_shown(wk["end_dev"])
+        elif w.t_stop is not None:                         # They've stopped was pressed before the end: shown now,
+            self._walk_shown(max(w.t_stop, wk["end_dev"]))  # the after-end lock counting from the press
+
+    def _walk_shown(self, t_end_dev: Optional[float] = None) -> None:
+        """The walk ends on screen, at device time t_end_dev (by default the column that ended the screen's window,
+        else the newest column it saw): the answer _walk_ended made, its notice, the run log and the events."""
+        wk, self.walk = self.walk, None
+        if t_end_dev is None:
+            win = wk.get("screen") or wk["w"]
+            t_end_dev = win.t_end_col if win.t_end_col is not None else (win.t[-1] if win.t else wk["t_dev"])
+        rec = wk["rec"]
+        f = rec["f"]
+        self.last_end_dev = t_end_dev                      # (the after-end lock counts from the screen's end)
+        self.last_end_wall = rec["t_end_wall"] = time.monotonic()
+        # on screen at the model's own end: its t_end (None after "no signal"), so the wait off logs as before it
+        rec["screen_t_end"] = rec["t_end"] if t_end_dev == wk["end_dev"] else float(t_end_dev - wk["t_dev"])
         self.walk_log.append(rec)
         self.state = wk["from"] if wk["from"] not in (RESULT, DECIDING) else self.prev
         if f is None:                                      # (Undo walk can still remove the walk before it)
@@ -777,7 +849,7 @@ class App:
             same = " Same turn again: start from the back mark." \
                 if self.state in (ENROL_VISITOR, ENROL_UZAYR) else " Walk again from the back mark."
             self._notice("Missed that one." + same, "amber", 4.0)
-            self.log(f"walk {rec['id']} not seen, ended {w.reason} ({w.active_s:.1f} s active)")
+            self.log(f"walk {rec['id']} not seen, ended {rec['reason']} ({rec['active_s']:.1f} s active)")
             self._event("walk", **self._walk_event(rec))
             return
         self._retire(self.last)
@@ -795,13 +867,13 @@ class App:
             self._notice("Got it!", "green", 1.5)          # _enrol_count says what comes next
             self._enrol_count(rec, +1)
             self.state = self._resting()
-        elif p == "test":
-            rec["decision"] = self._decide(f)
+        elif p == "test":                                  # (its answer was made when the model's window ended)
             self.state, self.timer = DECIDING, time.monotonic() + float(self.cfg["ui"]["reading_s"])
         d = rec["decision"]
         at = f" at {rec['t_end']:.1f} s" if rec["t_end"] is not None else ""
         arr_at = f", arrived {rec['t_arrive']:.1f} s" if rec["t_arrive"] is not None else ""
-        ended = f" ended {w.reason}{at} ({w.active_s:.1f} s active{arr_at})"
+        shown = f", on screen {rec['screen_t_end']:.1f} s" if rec["screen_t_end"] != rec["t_end"] else ""
+        ended = f" ended {rec['reason']}{at} ({rec['active_s']:.1f} s active{arr_at}{shown})"
         self.log(f"walk {rec['id']} {p} seen{ended}" + (self._feat_text(f) if self.keep_log else "")
                  + (f" -> {d.label} margin {d.margin:.3f}{' not sure' if d.not_sure else ''} speed-only "
                     f"{d.speed_only.label if d.speed_only else '-'}" if d else ""))
@@ -866,9 +938,11 @@ class App:
             self._notice(text, "green", 3.0)
 
     def _walk_event(self, rec: dict) -> dict:
+        """The walk event: reason, t_end and t_arrive are the model's window (the bench tools re-run it), screen_t_end
+        is when the walk ended on screen."""
         d = rec["decision"]
         out = {k: rec.get(k) for k in ("id", "purpose", "t_click", "t_dev", "seen", "reason", "f", "label", "active_s",
-                                       "t_end_dev", "t_end", "t_arrive")}
+                                       "t_end_dev", "t_end", "t_arrive", "screen_t_end")}
         if d is not None:
             out["decision"] = {"label": d.label, "margin": d.margin, "not_sure": d.not_sure,
                                "speed_only": d.speed_only.label if d.speed_only else None}
@@ -958,8 +1032,15 @@ class App:
         if self.walk is not None and now - self.walk["t_click"] > float(self.cfg["walk"]["max_s"]) \
                 + float(self.cfg["walk"]["guard_s"]):          # columns stopped coming: end on what was seen
             w = self.walk["w"]
-            w.ended, w.reason = True, "no signal"
-            self._walk_ended()
+            if not w.ended:
+                w.ended, w.reason = True, "no signal"
+                self._walk_ended()
+            if self.walk is not None:                      # (only the screen was still waiting: show it now)
+                self._walk_shown()
+        elif self.walk is not None and "ended_at" in self.walk and now - self.walk["ended_at"] \
+                > float(self.cfg["walk"].get("screen_max_extra_s", 1.5)) + float(self.cfg["walk"]["guard_s"]):
+            self.log(f"walk {self.walk['id']} shown: no columns came after its answer")
+            self._walk_shown()                             # only the screen waits, and the columns stopped coming
         self._repair()
         b = self.busy()
         if b is not None and b >= float(self.cfg["health"]["busy_amber"]):
@@ -1599,7 +1680,7 @@ def run_replay(cfg: dict, script: str, speed: float = 1.0, headless: bool = Fals
                     "not_sure": d.not_sure if d else None, "speed": round(w["f"]["speed"], 2) if w["f"] else None,
                     "gt_speed": round(truth["gt_speed"], 2), "scored": scored(d, truth["role"]), "reason": w["reason"],
                     "active_s": round(w["active_s"], 2), "t_end": rnd(w.get("t_end")),
-                    "t_arrive": rnd(w.get("t_arrive"))})
+                    "t_arrive": rnd(w.get("t_arrive")), "screen_t_end": rnd(w.get("screen_t_end"))})
     summ["walks"] = res
     summ["n_walks_planned"], summ["n_walks_seen_by_app"] = len(plan.walks), len(seen)
     summ["script"] = os.path.basename(script)
@@ -1626,7 +1707,8 @@ def run_replay(cfg: dict, script: str, speed: float = 1.0, headless: bool = Fals
     for r in res:
         print(f"  {r['role']:<8} {r['purpose']:<14} seen {str(r['seen']):<5} -> {str(r['decision']):<8} "
               f"margin {r['margin']}  speed {r['speed']} (truth {r['gt_speed']})  ended {r['reason']} at "
-              f"{r['t_end']} s, arrived {r['t_arrive']} s  {r['scored'] or ''}", flush=True)
+              f"{r['t_end']} s, arrived {r['t_arrive']} s, on screen {r['screen_t_end']} s  {r['scored'] or ''}",
+              flush=True)
     log.close()
     for msg in off:
         print(f"OFF SCRIPT: {msg}", flush=True)
