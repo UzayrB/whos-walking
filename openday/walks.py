@@ -3,7 +3,8 @@
 This file, in order:
   1. WalkWindow: collects one walk's columns from the click and decides when the walk ended.
   2. The four numbers the screen shows: step_rate and walk_features.
-  3. The thesis's gait features (walk_gait), copied unchanged from the thesis code (tests/test_walks.py checks them).
+  3. The thesis's gait features (walk_gait), copied unchanged from the thesis code (tests/test_walks.py checks them),
+     plus four scale-free measures of OpenDay's own on the same window (shape_features).
 
 Walk windowing: a walk starts on the click and ends when the walker has arrived (the energy stopped climbing),
 gone quiet, been stopped by the operator, was never seen (give-up), or at a hard limit.
@@ -11,6 +12,7 @@ gone quiet, been stopped by the operator, was never seen (give-up), or at a hard
 
 from __future__ import annotations
 
+import warnings
 from bisect import bisect_left, insort
 from collections import deque
 from typing import Optional
@@ -18,7 +20,7 @@ from typing import Optional
 import numpy as np
 from scipy import signal
 
-from openday.chain import Columns, speed_of
+from openday.chain import Columns, live_bins, speed_of, subcarriers
 
 # --- 1. One walk's window ---
 
@@ -432,7 +434,9 @@ def torso_hz_h(a_link: np.ndarray, bmat: np.ndarray = None) -> float:
 DOP = (["leg_torso", "q25_torso", "q75_torso", "c50_cv", "c95_cv", "c50_periodicity", "c95_periodicity"]
        + [f"c50_cyc{i:02d}" for i in range(16)] + [f"c95_cyc{i:02d}" for i in range(16)]
        + [f"uprof_{i}" for i in range(8)])
-GAIT_NAMES = ["cadence_hz"] + DOP + ["moddepth_dop", "sub_dispersion", "torso_hz"]
+# OpenDay's own (12 Nov), not the thesis's: shape_features below
+SHAPE = ["moddepth_dop10", "adj4", "ev21", "pc1_frac"]
+GAIT_NAMES = ["cadence_hz"] + DOP + ["moddepth_dop", "sub_dispersion", "torso_hz"] + SHAPE
 
 # visitor-friendly words for the "what separated this walk" line: (words, the features they cover)
 GAIT_PLAIN = [("speed", ("speed", "torso_hz")),
@@ -442,15 +446,17 @@ GAIT_PLAIN = [("speed", ("speed", "torso_hz")),
               ("stride rhythm", ("c50_periodicity", "c95_periodicity") + tuple(f"c50_cyc{i:02d}" for i in range(16))
                + tuple(f"c95_cyc{i:02d}" for i in range(16))),
               ("body motion", tuple(f"uprof_{i}" for i in range(8))),
-              ("movement strength", ("moddepth_dop", "sub_dispersion"))]
+              ("movement strength", ("moddepth_dop", "sub_dispersion", "moddepth_dop10")),
+              ("body echo", ("adj4", "ev21", "pc1_frac"))]
 
 
-def single_link(AN: np.ndarray) -> dict:
+def single_link(AN: np.ndarray, groups: Optional[np.ndarray] = None) -> dict:
     """engine.live_features for one link: AN (n, n_sub) amplitude under per-packet normalisation, 150 Hz.
 
     Cadence from the link's rms and PC1 channels in 0.8 to 3.5 Hz (the thesis's live channels; the mean channel
     is constant under normalisation); Doppler contours of PCs 2 to 6 in 4 to 70 Hz with 0.2 s frames; modulation
-    depth and subcarrier dispersion; the torso's Doppler frequency. Missing values are NaN.
+    depth and subcarrier dispersion; the torso's Doppler frequency. Then OpenDay's four shape_features (`groups`:
+    each column's subcarrier, see shape_features). Missing values are NaN.
     """
     out = {n: float("nan") for n in GAIT_NAMES}
     AN = np.asarray(AN, float)
@@ -471,7 +477,49 @@ def single_link(AN: np.ndarray) -> dict:
     out["moddepth_dop"] = float(np.std(d) / lvl)
     out["sub_dispersion"] = float(np.median(np.std(bg, axis=0)) / 1e-9)
     out["torso_hz"] = torso_hz_h(AN, bmat=bd)
+    out.update(shape_features(AN, bd, groups))
     return {k: (float(v) if v is not None and np.isfinite(v) else float("nan")) for k, v in out.items()}
+
+
+def _band_hz(x: np.ndarray, lo: float, hi: float, axis: int = 0) -> np.ndarray:
+    """bandpass's filter (4th-order Butterworth, zero phase) on any band in Hz."""
+    nyq = FS / 2.0
+    sos = signal.butter(4, [lo / nyq, min(hi, 0.95 * nyq) / nyq], btype="bandpass", output="sos")
+    return signal.sosfiltfilt(sos, np.asarray(x, float), axis=axis)
+
+
+def shape_features(AN: np.ndarray, bd: np.ndarray, groups: Optional[np.ndarray] = None) -> dict:
+    """OpenDay's own four measures of the walk's window (12 Nov; not from the thesis). AN is single_link's window,
+    bd its 4 to 70 Hz band (bandpass "dop"). Each is a ratio, so scaling every amplitude (or the room's level) by
+    the same factor leaves it unchanged:
+
+      moddepth_dop10  moddepth_dop on 10 to 70 Hz instead of 4 to 70 Hz (leaves out the slowest motion, under
+                      about 0.6 m/s)
+      adj4            the mean correlation of the 4 to 70 Hz motion between subcarriers 4 apart in frequency order
+                      (each bin relative to its own mean level, a subcarrier's two estimates averaged). `groups` is
+                      each column's subcarrier (chain.subcarriers(live_bins)[1]); without it adj4 is missing
+      ev21            the 4 to 70 Hz band's covariance across subcarriers (single_link's Doppler PCA): its second
+                      eigenvalue over its first
+      pc1_frac        ... its first eigenvalue over their sum
+    """
+    out = {n: float("nan") for n in SHAPE}
+    lvl = max(float(AN.mean()), 1e-6)
+    d = bandpass(np.sqrt(np.mean(_band_hz(AN, 10.0, 70.0, axis=0) ** 2, axis=1)), "b08_35")
+    out["moddepth_dop10"] = float(np.std(d) / lvl)
+    b = bd - bd.mean(axis=0, keepdims=True)
+    ev = np.maximum(np.sort(np.linalg.eigvalsh(b.T @ b))[::-1], 0.0)
+    out["pc1_frac"] = float(ev[0] / max(float(ev.sum()), 1e-30))
+    out["ev21"] = float(ev[1] / max(float(ev[0]), 1e-30))
+    if groups is not None and len(groups) == AN.shape[1]:
+        g = np.asarray(groups, int)
+        rel = bd / np.maximum(AN.mean(axis=0), 1e-6)[None, :]
+        S = np.zeros((rel.shape[0], int(g.max()) + 1))
+        np.add.at(S.T, g, rel.T)
+        S /= np.maximum(np.bincount(g, minlength=S.shape[1]), 1)[None, :]
+        with np.errstate(all="ignore"), warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)      # a flat subcarrier: its correlations are missing
+            out["adj4"] = float(np.nanmean(np.diag(np.corrcoef(S.T), 4)))
+    return out
 
 
 def walk_gait(raw_t: np.ndarray, raw_a: np.ndarray, t_click: float, t_end: float, cfg: dict) -> dict:
@@ -482,4 +530,4 @@ def walk_gait(raw_t: np.ndarray, raw_a: np.ndarray, t_click: float, t_end: float
     m = (raw_t >= t_click) & (raw_t <= t1)
     if (t1 - t_click) < float(g["min_window_s"]) or m.sum() < int(float(g["min_window_s"]) * FS):
         return {n: float("nan") for n in GAIT_NAMES}
-    return single_link(raw_a[m])
+    return single_link(raw_a[m], subcarriers(live_bins(cfg))[1])

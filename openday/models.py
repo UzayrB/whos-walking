@@ -106,7 +106,7 @@ def decide_m0(x: np.ndarray, pools: dict[str, np.ndarray], names: Sequence[str],
 
 READOUTS = ["speed", "steps", "swing", "bounce"]
 ALL = READOUTS + walks.GAIT_NAMES
-LOG = ("moddepth_dop", "sub_dispersion")          # scale-like and heavy-tailed: compared on a log scale
+LOG = ("moddepth_dop", "sub_dispersion", "moddepth_dop10")   # scale-like and heavy-tailed: compared on a log scale
 
 
 def vec(f: dict, names: Sequence[str]) -> np.ndarray:

@@ -252,3 +252,69 @@ def test_single_link_is_live_features_for_one_link(cfg):
     assert np.isclose(mine["moddepth_dop"], np.std(d) / max(float(AN.mean()), 1e-6))
     assert np.isclose(mine["sub_dispersion"], np.median(np.std(bg, axis=0)) / 1e-9)
     assert np.isclose(mine["torso_hz"], E.torso_hz_h(AN, bmat=bd))
+
+
+# ---- OpenDay's own four measures (walks.shape_features) ---------------------------------------------------------------
+
+def _synthetic_walk(n=900, seed=0):
+    """A synthetic walk's raw window (n x 103, each packet's mean 1): a 1.8 Hz step rhythm modulating a 12 Hz and a
+    35 Hz Doppler tone whose strength drifts smoothly across the subcarriers, plus noise."""
+    rng = np.random.default_rng(seed)
+    t = np.arange(n)[:, None] / walks.FS
+    k = np.arange(103)[None, :]
+    env = 1.0 + 0.6 * np.sin(2 * np.pi * 1.8 * t)
+    mot = 0.04 * env * (np.sin(2 * np.pi * 12 * t + k / 9.0) + 0.5 * np.sin(2 * np.pi * 35 * t + k / 4.0))
+    a = 1.0 + 0.3 * np.cos(k / 13.0) + mot + 0.01 * rng.normal(size=(n, 103))
+    return a / a.mean(axis=1, keepdims=True)
+
+
+def test_shape_features_finite_and_scale_free(cfg):
+    """The four new measures are finite on a walk, in their ranges, and unchanged when every amplitude is scaled by
+    the same factor (a louder or quieter room); the thesis's measures are the same with or without them."""
+    groups = chain.subcarriers(chain.live_bins(cfg))[1]
+    AN = _synthetic_walk()
+    f = walks.single_link(AN, groups)
+    assert set(walks.SHAPE) <= set(walks.GAIT_NAMES) and all(np.isfinite(f[n]) for n in walks.SHAPE)
+    assert f["moddepth_dop10"] > 0 and -1 <= f["adj4"] <= 1 and 0 <= f["ev21"] <= 1 and 0 < f["pc1_frac"] <= 1
+    for c in (0.37, 4.2):
+        g = walks.single_link(AN * c, groups)
+        for n in walks.SHAPE:
+            assert g[n] == pytest.approx(f[n], rel=1e-9), n
+    plain = walks.single_link(AN)                                  # without the subcarrier map: adj4 alone missing
+    assert np.isnan(plain["adj4"])
+    for n in walks.GAIT_NAMES:
+        if n != "adj4":
+            assert plain[n] == f[n] or (np.isnan(plain[n]) and np.isnan(f[n])), n
+    t = np.arange(len(AN)) / walks.FS                              # walk_gait passes the map: adj4 is there
+    gw = walks.walk_gait(t, AN, 0.0, float(t[-1]), cfg)
+    assert all(gw[n] == pytest.approx(f[n], rel=1e-12) for n in walks.SHAPE)
+
+
+def test_shape_features_by_hand(cfg):
+    """Each new measure recomputed from its definition (walks.shape_features' docstring)."""
+    from scipy import signal
+    sc, groups = chain.subcarriers(chain.live_bins(cfg))
+    AN = _synthetic_walk(seed=1)
+    f = walks.single_link(AN, groups)
+    sos = signal.butter(4, [10.0 / 75.0, 70.0 / 75.0], btype="bandpass", output="sos")
+    b10 = signal.sosfiltfilt(sos, AN, axis=0)
+    d = walks.bandpass(np.sqrt((b10 ** 2).mean(axis=1)), "b08_35")
+    assert f["moddepth_dop10"] == pytest.approx(np.std(d) / AN.mean(), rel=1e-9)
+    bd = walks.bandpass(AN, "dop", axis=0)
+    b = bd - bd.mean(axis=0)
+    ev = np.sort(np.linalg.eigh(np.cov(b.T))[0])[::-1]
+    assert f["pc1_frac"] == pytest.approx(ev[0] / ev.sum(), rel=1e-9)
+    assert f["ev21"] == pytest.approx(ev[1] / ev[0], rel=1e-9)
+    per = np.array([(bd / AN.mean(axis=0))[:, groups == i].mean(axis=1) for i in range(len(sc))])
+    r = [np.corrcoef(per[i], per[i + 4])[0, 1] for i in range(len(sc) - 4)]
+    assert f["adj4"] == pytest.approx(np.mean(r), rel=1e-9)
+
+
+@pytest.mark.needs_code
+def test_shape_features_on_a_real_walk(cfg):
+    """On 4 s of a real Room B walk: finite, and scale-free."""
+    groups = chain.subcarriers(chain.live_bins(cfg))[1]
+    AN = np.asarray(_sample(cfg), float)                           # (float32 from the chain: scaled exactly here)
+    f, g = walks.single_link(AN, groups), walks.single_link(AN * 2.5, groups)
+    for n in walks.SHAPE:
+        assert np.isfinite(f[n]) and g[n] == pytest.approx(f[n], rel=1e-9), n

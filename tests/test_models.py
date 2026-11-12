@@ -132,3 +132,13 @@ def test_tally_has_no_names(tmp_path):
     assert t.new_visitor() == 1
     d = json.load(open(tmp_path / "tally.json"))
     assert set(d) == {"date", "right", "wrong", "not_sure", "visitors"} and list(d["visitors"]) == ["1"]
+
+
+def test_every_measure_has_plain_words_and_the_new_scale_is_log():
+    """Every measure a model can use belongs to one plain-word group of the screen's "Told apart by" line, and the new
+    movement-strength measure is compared on a log scale like the old one."""
+    from openday import walks
+    covered = set().union(*(set(m) for _w, m in walks.GAIT_PLAIN))
+    assert set(M.ALL) <= covered
+    assert "moddepth_dop10" in M.LOG and M.vec({"moddepth_dop10": float(np.e)}, ["moddepth_dop10"])[0] == pytest.approx(1.0)
+    assert M.why({"adj4": 1.0, "pc1_frac": 0.5, "speed": 0.1}, "uzayr") == ["body echo", "speed"]

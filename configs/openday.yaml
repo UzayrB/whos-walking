@@ -79,7 +79,7 @@ classifier:
   kind: m1                     # fitted by eval-pair: m0 (nearest centroid, readouts), m1 (learned whitening), m2 (pairwise)
   model_path: state/model/model.json   # m1 / m2: the trained model, fitted on the six thesis people only
                                        # (eval-pair --write would overwrite it with its own recipe)
-  model_tau: 0.1043            # m1 / m2: a margin below this is a close call: the answer still names the nearer
+  model_tau: 0.1094            # m1 / m2: a margin below this is a close call: the answer still names the nearer
                                # person, and the log counts it; about 15 % of live test decisions fall below it
   use: [speed, steps, swing, bounce]   # m0: features the decision uses (the tiles always show all four)
   tau: 0.08                    # fitted by eval: m0 only (no trained model): a margin below this is a close call
