@@ -194,7 +194,7 @@ Start walk.
 | **Grey** "Walk back to the start" | Just after a walk: the walker is going back (for 3 s the big button is grey too). |
 | **Amber** "Wait for green" | Someone has been moving near the boards for 3 s. Ask them to step back. |
 | **Amber** "Missed twice" | Two walks in a row weren't seen. Is someone near the boards? Is the walker starting from the back mark? It goes when a walk is seen, or with the next player. |
-| **Amber** "Measure the room again" | The room was busy while it was measured (15 s). Everyone still, then **Measure room** (top right). |
+| **Amber** "Measure the room again" | Someone moved while the room was measured (20 s; the app uses the still part of it until you measure again), or the room was busier than earlier in the run (15 s). Everyone still, then **Measure room** (top right). |
 | **Amber** "Room not measured" / "Measuring the room" | Set-up. |
 | **Red** "No signal" / "Weak signal" | A problem with the boards or the cable only (section 6). |
 
@@ -208,7 +208,7 @@ Start walk.
 | Red light "Weak signal" | Fewer than 100 packets a second reach the laptop (Details shows about 150 when all is well). Check the RX2 cable and socket. |
 | "Missed that one" keeps appearing | Start each walk from the back mark, click as the walker sets off, and keep everyone else away from the boards. After two misses in a row the light says "Missed twice". If the light stays amber with nobody near, click **Measure room** (top right) with everyone still. |
 | The light stays on "Wait for green" | Ask people near the boards to step back. Nobody there? **Measure room** (top right). |
-| The light says "Measure the room again" ("Room was busy" on your line) | Someone moved while the room was measured: **Measure room** (top right) again, everyone still. |
+| The light says "Measure the room again" ("Someone moved" or "Room was busy" on your line) | Someone moved while the room was measured: **Measure room** (top right) again, everyone still. |
 | You clicked **They've stopped** but the walk had already ended | Nothing happens (your line says "Ignored"): the big button is grey for 3 s after each walk. Click again as the next walker sets off. |
 | The answer is slow, or a walk runs on to 9 s | Click **They've stopped** as soon as the walker stands still on the X. |
 | The answer came while they were still walking | The walk ended early. Click **Undo walk** and walk again. |

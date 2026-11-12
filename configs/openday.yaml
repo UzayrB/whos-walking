@@ -110,8 +110,10 @@ baseline:
   min_cols: 20                 # fewer columns than this and the baseline is refused
   delay_s: 5.0                 # Measure room counts down this long (time to step back) before measuring
   recheck_ratio: 1.3           # a measurement this many times the run's quietest asks to measure again
-  normal_e0: 0.8               # a still room at home measures about this (shown beside each new measurement)
-  busy_e0: 1.1                 # above this, someone probably moved while measuring: asks to measure again
+  quiet_flag_d: 15.0           # someone moved while measuring: its loudest second this many times its quietest
+                               # quarter's level. The room is then measured on that quarter, and the operator asked
+                               # to measure again (chain.room_baseline; 30 s of a still room measured 3 to 12;
+                               # a 10 s live capture of a still room very rarely passes 15: measure again)
 
 health:
   busy_window_s: 1.0

@@ -1,9 +1,10 @@
 """The signal chain (openday/chain.py): a synthetic Doppler tone reads as the right speed, the live bins, the
-gain-invariant normalisation, live and offline batches giving the same columns, the receiver's clock; then the 3D
-picture's movement bars on their own (the Ridge class): frequency order, one ridge per waterfall column, where the
-signal wobbles."""
+gain-invariant normalisation, live and offline batches giving the same columns, the receiver's clock, the room
+measurement with someone moving in it; then the 3D picture's movement bars on their own (the Ridge class): frequency
+order, one ridge per waterfall column, where the signal wobbles."""
 
 import copy
+import json
 
 import numpy as np
 import pytest
@@ -81,6 +82,62 @@ def test_device_clock_unwraps_and_restarts(cfg):
     _t, _tm, restarted = c.push(np.array([500_000_000, 500_007_000]), np.array([51.0, 51.007]))
     _t, _tm, restarted = c.push(np.array([12_000, 19_000]), np.array([51.1, 51.107]))   # board rebooted
     assert restarted and c.wraps == 0
+
+
+# ---- the room measurement (Measure room): someone moving while it measures ------------------------------------------
+
+def _room(cfg, spans, seed=1):
+    """A Measure room capture from synthetic packets: the last 10 s (baseline.live_s) of spans (seconds, tone Hz,
+    depth) played back to back; a tone is someone moving."""
+    lts, tms, ds, lt0 = [], [], [], 5_000_000
+    for i, (secs, f, depth) in enumerate(spans):
+        lt, tm, data = packets(secs, f, depth=depth, seed=seed + i, lt0_us=lt0)
+        if tms:
+            tm = tm - tm[0] + tms[-1][-1] + 0.06
+        lts.append(lt)
+        tms.append(tm)
+        ds.append(data)
+        lt0 = int(lt[-1]) + 6667
+    ch, out = _run(cfg, None, np.concatenate(lts), np.concatenate(tms), np.concatenate(ds), 64)
+    t, p, g = (np.concatenate([getattr(c, k) for c in out]) for k in ("t", "power", "gap"))
+    m = t > t[-1] - 10.0
+    return ch, chain.Columns(t[m], p[m], g[m])
+
+
+def test_a_still_room_is_measured_as_before(cfg):
+    """A still room: room_baseline gives make_baseline's floor and e0 bit for bit, not disturbed, d well under
+    baseline.quiet_flag_d; the saved file keeps disturbed and d."""
+    ch, c = _room(cfg, [(12.0, 0.0, 0.0)])
+    old = chain.make_baseline(c, cfg, ch.freqs, ch.spec.variant, ch.spec.nfft, created=5.0)
+    b = chain.room_baseline(c, cfg, ch.freqs, ch.spec.variant, ch.spec.nfft, created=5.0)
+    assert np.array_equal(b.floor, old.floor) and b.e0 == old.e0 and (b.n_cols, b.created) == (old.n_cols, 5.0)
+    assert not b.disturbed and 0.0 < b.d < float(cfg["baseline"]["quiet_flag_d"]) / 2
+    b.disturbed, b.d = True, 31.5
+    back = chain.Baseline.from_json(json.loads(json.dumps(b.to_json())))
+    assert np.array_equal(back.floor, b.floor) and (back.e0, back.disturbed, back.d) == (b.e0, True, 31.5)
+
+
+def test_someone_moving_while_the_room_is_measured_leaves_its_quiet_part(cfg):
+    """Someone moves for 5 s of the 10 (a 15 Hz wobble): the whole capture's level comes out several times the
+    still room's; room_baseline marks it disturbed and takes the level of its quiet part, near the still room's."""
+    for seed in (1, 2, 3):
+        ch, c = _room(cfg, [(12.0, 0.0, 0.0)], seed)
+        still = chain.make_baseline(c, cfg, ch.freqs, ch.spec.variant, ch.spec.nfft).e0
+        ch, c = _room(cfg, [(5.0, 0.0, 0.0), (5.0, 15.0, 0.02), (2.0, 0.0, 0.0)], seed)
+        whole = chain.make_baseline(c, cfg, ch.freqs, ch.spec.variant, ch.spec.nfft).e0
+        b = chain.room_baseline(c, cfg, ch.freqs, ch.spec.variant, ch.spec.nfft)
+        assert b.disturbed and b.d >= float(cfg["baseline"]["quiet_flag_d"]), (seed, b.d)
+        assert whole > 2.0 * still and 0.6 * still < b.e0 < 1.25 * still, (seed, still, whole, b.e0)
+
+
+def test_a_room_measurement_saved_before_disturbed_existed_still_loads():
+    """A baseline file the app wrote before disturbed and d existed (state/baseline_live.json) loads as a still
+    room's."""
+    old = {"floor": [1.0, 2.0, 3.0], "e0": 0.7, "n_cols": 187, "variant": "A", "nfft": 128, "created": 12.0}
+    b = chain.Baseline.from_json(old)
+    assert list(b.floor) == [1.0, 2.0, 3.0] and (b.e0, b.n_cols, b.variant, b.nfft, b.created) == (0.7, 187, "A",
+                                                                                                 128, 12.0)
+    assert b.disturbed is False and b.d == 0.0
 
 
 # ---- the 3D picture's movement bars (Ridge on its own) ---------------------------------------------------------------

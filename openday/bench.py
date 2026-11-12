@@ -168,7 +168,8 @@ PROBE_AFTER_WALK_S = 8.0     # bench-check's test clicks on the quiet room start
 def bench_detect(cfg: dict, run_dir: str, bc: Optional[dict] = None,
                  probes: bool = False) -> tuple[list[dict], dict]:
     """Every recorded walk (click) of one run re-run offline through WalkWindow, with the room level the app had:
-    the run's own Measure room (Ctrl+B) captures, the latest ready before the click in the same epoch (as live).
+    the run's own Measure room (Ctrl+B) captures, the latest ready before the click in the same epoch (as live; a
+    capture someone moved in gives its quiet part, chain.room_baseline, and its d goes in info["disturbed"]).
 
     One row per walk event, labelled or not, with the live and the offline end; a game walk's row carries the
     walk ids of the pools it was decided on ("pools", from bench_rounds; the rounds in info["rounds"]). With
@@ -192,8 +193,8 @@ def bench_detect(cfg: dict, run_dir: str, bc: Optional[dict] = None,
             t0, k0 = _to_dev(bc, e["t_mono"])
             m = (allc.t >= t0) & (allc.t <= t0 + float(e["secs"])) & (ep == k0)
             if m.sum() >= int(cfg["baseline"]["min_cols"]):
-                b = chain.make_baseline(chain.Columns(allc.t[m], allc.power[m], allc.gap[m]), cfg, ch.freqs,
-                                      ch.spec.variant, ch.spec.nfft)
+                b = chain.room_baseline(chain.Columns(allc.t[m], allc.power[m], allc.gap[m]), cfg, ch.freqs,
+                                        ch.spec.variant, ch.spec.nfft)
                 caps.append((e["t_mono"] + float(e["secs"]), k0, t0 + float(e["secs"]), b))
     labels, discarded, stops = {}, set(), {}
     for e in ev:
@@ -253,6 +254,7 @@ def bench_detect(cfg: dict, run_dir: str, bc: Optional[dict] = None,
                      "t_arrive": float(w.t_arrive - t) if w is not None and w.t_arrive is not None else float("nan"),
                      "f": f, "_win": (t, float(w.t_arrive), k) if f is not None else None})
     info["e0"] = [b.e0 for *_x, b in caps]
+    info["disturbed"] = [b.d for *_x, b in caps if b.disturbed]
     if probes:
         quits = [_to_dev(bc, e["t_mono"]) for e in ev if e["kind"] == "key" and is_key(str(e.get("key", "")), "quit")]
         spans.sort()
@@ -519,6 +521,9 @@ def print_run(rows: list[dict], info: dict, out: Callable = print) -> None:
     e0 = np.array(info["e0"], float)
     if len(e0):
         out(f"room e0 over the run: min {e0.min():.3g}  median {np.median(e0):.3g}  max {e0.max():.3g}")
+    if info.get("disturbed"):                              # (as live: chain.room_baseline)
+        d = ", ".join(f"{x:.1f}" for x in info["disturbed"])
+        out(f"room measured while someone moved (d {d}): its quiet part used")
     for rd in info.get("rounds", []):                      # (only runs recorded with the reuse print anything here)
         if rd["reused"]:
             out(f"player {rd['index']}: Uzayr's learning walks {', '.join(str(w) for w in rd['reused'])} reused "

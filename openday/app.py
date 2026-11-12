@@ -406,7 +406,7 @@ class App:
         b = self.cached
         if b is None or (time.time() - b.created) / 60.0 > float(self.cfg["baseline"]["max_reuse_min"]):
             return None
-        return b
+        return None if b.disturbed else b                  # (someone moved during it: measure again instead)
 
     def _vname(self, n: int) -> str:
         """The visitor's name in at most n characters ("the visitor" when there is none): the whole name, else its
@@ -621,18 +621,21 @@ class App:
         try:
             if len(cols) < int(self.cfg["baseline"]["min_cols"]):
                 raise ValueError("too few packets")
-            b = chain.make_baseline(cols, self.cfg, self.chain.freqs, self.chain.spec.variant, self.chain.spec.nfft,
-                                  created=time.time())
+            b = chain.room_baseline(cols, self.cfg, self.chain.freqs, self.chain.spec.variant, self.chain.spec.nfft,
+                                    created=time.time())
         except (ValueError, IndexError) as exc:
             self.log(f"baseline failed: {exc}")
             self.state = NEEDS_BASELINE if self.chain.baseline is None else self._resting()
             self._hint("Measuring failed: check RX2, then measure again.", "red", 8.0)
             return
-        self._event("baseline_end", t_mono=time.monotonic(), n_cols=len(cols), e0=b.e0)
+        self._event("baseline_end", t_mono=time.monotonic(), n_cols=len(cols), e0=b.e0, disturbed=b.disturbed,
+                    d=b.d)
         ref = self.quiet_e0
         self._set_baseline(b, "captured")
         ratio = float(self.cfg["baseline"].get("recheck_ratio", 1.3))
-        if ref is not None and b.e0 > ratio * ref:          # busier than this run's quietest measurement
+        if b.disturbed:                                    # (its own hint already asks to measure again)
+            self.log(f"baseline disturbed: d {b.d:.1f}, the quiet part's e0 {b.e0:.3g}")
+        elif ref is not None and b.e0 > ratio * ref:        # busier than this run's quietest measurement
             self.log(f"baseline busy: e0 {b.e0:.3g} is {b.e0 / ref:.1f}x the quietest {ref:.3g}")
             self._hint("Room was busy: click Measure room again.", "amber", 15.0, light="Measure the room again")
 
@@ -658,16 +661,17 @@ class App:
         self.log(f"baseline {how} cols {b.n_cols}")
         self.state = self.prev if self.prev not in (NEEDS_BASELINE, BUSY, NAME_ENTRY) else IDLE
         self.state = self._resting() if self.state in (IDLE, READY) else self.state
-        self.quiet_e0 = b.e0 if self.quiet_e0 is None else min(self.quiet_e0, b.e0)
-        if how == "captured":                              # the number, beside a still room's, so a busy one shows
-            normal, busy = (float(self.cfg["baseline"].get(k, d)) for k, d in (("normal_e0", 0.8), ("busy_e0", 1.1)))
-            text = f"Room level {b.e0:.2f} (normal about {normal:.1f})."
-            if b.e0 > busy:
-                self._hint(text + " Someone moved? Measure room again.", "amber", 20.0, light="Measure the room again")
-            else:
-                self._hint(text, "green", 8.0)
-        else:
+        low = self.quiet_e0                                # the run's quietest measurement before this one
+        if not b.disturbed:                                # (one someone moved in never sets it)
+            self.quiet_e0 = b.e0 if low is None else min(low, b.e0)
+        if how != "captured":
             self._hint("Using the last measurement.", "green")
+        elif b.disturbed:                                  # its quiet part is in use (chain.room_baseline)
+            self._hint("Someone moved: using the quiet part. Measure room again when everyone is still.", "amber",
+                       20.0, light="Measure the room again")
+        else:                                              # the number, and the run's quietest when that was lower
+            quietest = f" (quietest today {low:.2f})" if low is not None and round(low, 2) < round(b.e0, 2) else ""
+            self._hint(f"Room level {b.e0:.2f}{quietest}.", "green", 8.0)
 
     def _load_cached_baseline(self) -> Optional[chain.Baseline]:
         if not self.baseline_path or not os.path.exists(self.baseline_path):

@@ -1,6 +1,7 @@
 """eval --bench on a synthetic bench session built from Room B walks, in the exact on-disk format live --record
-writes (bench_RX.bin via the capture file layout, events.jsonl beside it); and the bench tools rebuilding the pools
-of each game walk from a recording (also one the app itself writes)."""
+writes (bench_RX.bin via the capture file layout, events.jsonl beside it); the room level of a Measure room capture
+someone walked through; and the bench tools rebuilding the pools of each game walk from a recording (also one the
+app itself writes)."""
 
 import json
 import os
@@ -9,7 +10,7 @@ import numpy as np
 import pytest
 
 import openday
-from openday import bench, recordings
+from openday import bench, chain, recordings
 
 from helpers import _app, _type, _events, _player, _learn, _game
 
@@ -107,6 +108,43 @@ def test_bench_walks_apply_the_operator_stop(cfg, tmp_path):
     assert by[1]["reason"] != "operator" and by[1]["t_end"] > 2.0
     for w in ws:
         assert 0.0 < w["t_arrive"] <= w["t_end"] and w["active_s"] > 0
+
+
+@pytest.mark.needs_code
+def test_bench_detect_takes_the_quiet_part_of_a_room_measurement_someone_walked_through(cfg, tmp_path):
+    """Two walks pass during the 30 s Measure room capture: bench_detect gives the walk after it the room level the
+    app now takes (chain.room_baseline: the capture's quiet part, far below the whole capture's), and bench-check
+    says the measurement was disturbed."""
+    d = str(tmp_path / "20261101-160000")
+    st, ev = recordings.Stitcher(cfg), []
+    idle = recordings.IdleSource("P4", 1)
+    idle.take(st, 3.0)
+    t0 = st.t_end + 0.2
+    ev.append({"kind": "baseline_start", "t_mono": t0, "secs": 30.0})
+    idle.take(st, 8.0)
+    fr, ps = recordings.load_rx2("P4", 1, "natural"), recordings.passes("P4", 1, "natural", "S")
+    for p in ps[:2]:                                               # someone walks while the room is measured
+        recordings.walk_piece(st, p, fr, cfg)
+    idle.take(st, t0 + 31.0 - st.t_end)
+    click = recordings.walk_piece(st, ps[5], fr, cfg)
+    ev.append({"kind": "walk", "id": 1, "t_click": click, "seen": True, "label": "u", "f": None})
+    idle.take(st, 2.0)
+    os.makedirs(d)
+    _write_bin(os.path.join(d, "bench_RX.bin"), st.frames())
+    with open(os.path.join(d, "events.jsonl"), "w") as f:
+        f.write("\n".join(json.dumps(e) for e in ev) + "\n")
+    bc = bench.bench_columns(cfg, d)
+    rows, info = bench.bench_detect(cfg, d, bc=bc)
+    t_dev, k = bench._to_dev(bc, t0)                               # the capture's columns, as bench_detect cuts them
+    m = (bc["allc"].t >= t_dev) & (bc["allc"].t <= t_dev + 30.0) & (bc["ep"] == k)
+    cap = chain.Columns(bc["allc"].t[m], bc["allc"].power[m], bc["allc"].gap[m])
+    args = (cfg, bc["ch"].freqs, bc["ch"].spec.variant, bc["ch"].spec.nfft)
+    b, whole = chain.room_baseline(cap, *args), chain.make_baseline(cap, *args)
+    assert b.disturbed and info["disturbed"] == [b.d] and b.d >= float(cfg["baseline"]["quiet_flag_d"])
+    assert rows[0]["e0"] == b.e0 == info["e0"][0] and b.e0 < whole.e0 / 2 and rows[0]["seen"]
+    lines: list = []
+    assert bench.bench_check(cfg, d, out=lines.append) == 0
+    assert f"room measured while someone moved (d {b.d:.1f}): its quiet part used" in lines
 
 
 @pytest.mark.needs_code

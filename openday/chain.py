@@ -284,7 +284,9 @@ class Spectrogram:
 
 @dataclass
 class Baseline:
-    """Empty-room reference for one extractor: per-frequency median power and the median above-floor energy."""
+    """Empty-room reference for one extractor: per-frequency median power and the median above-floor energy.
+    `disturbed`: someone moved while the room was measured, so both come from its quiet part; `d`: how loud its
+    loudest second was against that part (room_baseline)."""
 
     floor: np.ndarray
     e0: float
@@ -292,15 +294,18 @@ class Baseline:
     variant: str
     nfft: int
     created: float = 0.0
+    disturbed: bool = False
+    d: float = 0.0
 
     def to_json(self) -> dict:
         return {"floor": [float(v) for v in self.floor], "e0": self.e0, "n_cols": self.n_cols,
-                "variant": self.variant, "nfft": self.nfft, "created": self.created}
+                "variant": self.variant, "nfft": self.nfft, "created": self.created, "disturbed": self.disturbed,
+                "d": self.d}
 
     @classmethod
     def from_json(cls, d: dict) -> "Baseline":
         return cls(np.asarray(d["floor"], float), float(d["e0"]), int(d["n_cols"]), d["variant"], int(d["nfft"]),
-                   float(d.get("created", 0.0)))
+                   float(d.get("created", 0.0)), bool(d.get("disturbed", False)), float(d.get("d", 0.0)))
 
 
 def band_mask(cfg: dict, freqs: np.ndarray) -> np.ndarray:
@@ -347,6 +352,39 @@ def make_baseline(cols: Columns, cfg: dict, freqs: np.ndarray, variant: str, nff
     b = Baseline(floor, 0.0, int(len(ok)), variant, int(nfft), created)
     tmp = contours(Columns(np.zeros(len(ok)), ok, np.zeros(len(ok), bool)), b, cfg, freqs)
     b.e0 = float(max(np.median(tmp.energy), _EPS))
+    return b
+
+
+def room_baseline(cols: Columns, cfg: dict, freqs: np.ndarray, variant: str, nfft: int, created: float = 0.0
+                  ) -> Baseline:
+    """A Measure room capture's Baseline: make_baseline's, unless someone moved while the room was measured; then
+    the floor and e0 come from the capture's quiet part, and it is marked disturbed.
+
+    The quiet part: the quarter of the columns whose energy above make_baseline's floor, as a centred 1-s running
+    median, is lowest. The floor is measured again on those columns and e0 is their median energy above it. d = the
+    loudest 1-s running median of every column's energy above that floor, over that e0: 3 to 12 on 30 s of a still
+    room (the thesis's 12 empty-room recordings and 10 home measurements), 27 and 36 on the two home measurements
+    someone moved in. From baseline.quiet_flag_d up, the quiet part is used."""
+    b = make_baseline(cols, cfg, freqs, variant, nfft, created)
+    ok = cols.power[~cols.gap] if (~cols.gap).sum() >= 10 else cols.power
+    band, k = band_mask(cfg, freqs), float(cfg["dsp"]["floor_scale"])
+
+    def energy(floor: np.ndarray) -> np.ndarray:           # each column's above-floor band energy, as contours
+        return np.clip(ok - k * floor[None, :], 0.0, None)[:, band].sum(axis=1)
+
+    def run_median(x: np.ndarray) -> np.ndarray:           # centred, over 1 s (fewer columns at the two ends)
+        h = min(max(1, int(round(1.0 / hop_s(cfg)))), len(x)) // 2
+        pad = np.concatenate((np.full(h, np.nan), x, np.full(h, np.nan)))
+        return np.nanmedian(sliding_window_view(pad, 2 * h + 1), axis=1)
+
+    s = run_median(energy(b.floor))
+    quiet = s <= np.quantile(s, 0.25)
+    floor = np.median(ok[quiet], axis=0)
+    e = energy(floor)
+    e0 = float(max(np.median(e[quiet]), _EPS))
+    b.d = float(run_median(e).max() / e0)
+    if b.d >= float(cfg["baseline"].get("quiet_flag_d", 15.0)):
+        b.floor, b.e0, b.disturbed = floor, e0, True
     return b
 
 

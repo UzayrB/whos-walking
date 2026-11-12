@@ -526,6 +526,28 @@ def test_after_redo_his_line_says_undo_walk_keeps_the_old_ones(cfg, tmp_path, re
     assert not app._can_unredo() and _now(app)["hint"][0] == "Click Start walk, then walk to the X yourself."
 
 
+@pytest.mark.shipped
+@pytest.mark.parametrize("record", [False, True])
+@pytest.mark.parametrize("size", [(16, 9), (14.7, 9.56)])
+def test_the_lines_after_measure_room_fit(cfg, tmp_path, record, size):
+    """After Measure room: the room level beside the run's quietest on one line, and "Someone moved: ..." a whole
+    sentence a line, both at full size and clear of the buttons, at both screen shapes, on the day and in a test
+    recording."""
+    app = _app(cfg, tmp_path, record=record)
+    n, v, nfft = len(app.chain.freqs), app.chain.spec.variant, app.chain.spec.nfft
+    full = app.screen.hint._base_size * size[1] / screen.BASE_H
+    app.quiet_e0 = 11.44
+    app._set_baseline(chain.Baseline(np.ones(n), 26.31, 100, v, nfft), "captured")
+    vm = app.view(time.monotonic())
+    assert vm["hint"][0] == "Room level 26.31 (quietest today 11.44)."
+    assert _drawn_hint(app, vm, size) == [vm["hint"][0]] and app.screen.hint.get_fontsize() == pytest.approx(full)
+    app._set_baseline(chain.Baseline(np.ones(n), 0.76, 100, v, nfft, disturbed=True, d=35.8), "captured")
+    vm = app.view(time.monotonic())
+    first, second = "Someone moved: using the quiet part.", "Measure room again when everyone is still."
+    assert vm["hint"][0] == f"{first} {second}"
+    assert _drawn_hint(app, vm, size) == [first, second] and app.screen.hint.get_fontsize() == pytest.approx(full)
+
+
 # ---- every screen at every size: nothing overlaps (tests/overlap.py measures the letters themselves) -----------------
 
 # Every screen of `python -m openday screens` and the hard cases (long names, the longest "Told apart by", extreme

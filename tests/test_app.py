@@ -7,6 +7,7 @@ while fresh); one marked `alternate_round` plays the older alternating round, wh
 (pools.enrol_order alternate: three learning walks each, Uzayr first, his walks wiped with each player)."""
 
 import collections
+import json
 import os
 import time
 
@@ -562,12 +563,15 @@ def test_a_close_call_still_names_the_nearer_person(cfg, tmp_path):
     assert "margin 0.010 not sure" in open(log).read()
 
 
-# ---- the room measurement: the countdown and the 1.3x check ----------------------------------------------------------
+# ---- the room measurement: the countdown, the room level, someone moving, and the 1.3x check -------------------------
 
-def _capture_cols(app, t0, t1, scale, seed):
+def _capture_cols(app, t0, t1, scale, seed, loud=None):
+    """Columns of the room into the running capture; loud = (from, to, x): someone moving then, x the power."""
     rng = np.random.default_rng(seed)
     t = np.arange(t0, t1, HOP)
     p = scale * rng.exponential(1.0, (len(t), len(app.chain.freqs)))
+    if loud is not None:
+        p[(t >= loud[0]) & (t < loud[1])] *= loud[2]
     app.capture["cols"].append(Columns(t, p, np.zeros(len(t), bool)))
 
 
@@ -589,7 +593,7 @@ def test_setup_next_measures_after_a_countdown(cfg, tmp_path):
     _capture_cols(app, 50.0 + d + 2.0, 50.0 + d + secs + 0.5, 1.0, 2)
     app._timers(time.monotonic())
     assert app.state == IDLE and app.chain.baseline is not None
-    assert app.view(time.monotonic())["hint"][0].startswith(f"Room level {app.chain.baseline.e0:.2f} (normal about")
+    assert app.view(time.monotonic())["hint"][0] == f"Room level {app.chain.baseline.e0:.2f}."
     e0 = app.chain.baseline.e0
     app.on_key_now("ctrl+b", 200.0)                                # again, with the room busy (3x the energy)
     _capture_cols(app, 200.0, 200.0 + d + secs + 0.5, 3.0, 3)
@@ -598,6 +602,75 @@ def test_setup_next_measures_after_a_countdown(cfg, tmp_path):
     hint = app.view(time.monotonic())["hint"]
     assert hint[0].startswith("Room was busy") and hint[1] == screen.STATUS["amber"]
     assert app.hint_ev[3] == "Measure the room again"             # the light says it too
+
+
+MOVED = "Someone moved: using the quiet part. Measure room again when everyone is still."
+
+
+@pytest.mark.alternate_round
+def test_the_room_level_after_each_measurement(cfg, tmp_path):
+    """After Measure room the operator's line gives the room level, green, and the run's quietest level when an
+    earlier measurement was quieter. Someone moving while it measured (3 s of the 30): amber for 20 s, the light
+    says "Measure the room again", the quiet part is the room level, and it never counts as the run's quietest.
+    The baseline_end event says which it was."""
+    app = _app(cfg, tmp_path, baseline=False, record=True)
+    d, secs = float(cfg["baseline"]["delay_s"]), float(cfg["baseline"]["bench_s"])
+    green, amber = screen.STATUS["green"], screen.STATUS["amber"]
+
+    def measure(t, scale, seed, loud=None):
+        app.on_key_now("ctrl+b", t)
+        _capture_cols(app, t, t + d + secs + 0.5, scale, seed, loud)
+        app._timers(time.monotonic())
+        return app.chain.baseline, app.view(time.monotonic())["hint"]
+
+    b1, hint = measure(50.0, 1.0, 0)
+    assert hint == (f"Room level {b1.e0:.2f}.", green) and _light(app) == ("green", "Ready")
+    b2, hint = measure(200.0, 1.2, 1)                              # a little busier (under 1.3x): its quietest too
+    assert b1.e0 < b2.e0 < 1.3 * b1.e0
+    assert hint == (f"Room level {b2.e0:.2f} (quietest today {b1.e0:.2f}).", green) and _light(app)[0] == "green"
+    b3, hint = measure(400.0, 1.0, 2, loud=(400.0 + d + 10.0, 400.0 + d + 13.0, 50.0))
+    assert b3.disturbed and b3.d >= float(cfg["baseline"]["quiet_flag_d"]) and b3.e0 < 1.3 * b1.e0
+    assert hint == (MOVED, amber) and _light(app) == ("amber", "Measure the room again")
+    assert app.hint_ev[2] - time.monotonic() > 19.0 and app.quiet_e0 == b1.e0
+    b4, hint = measure(600.0, 0.8, 3)                              # the quietest yet: just its number
+    assert hint == (f"Room level {b4.e0:.2f}.", green) and app.quiet_e0 == b4.e0
+    ev = [e for e in _events(tmp_path) if e["kind"] == "baseline_end"]
+    assert [(e["e0"], e["disturbed"], e["d"]) for e in ev] == [(b.e0, b.disturbed, b.d) for b in (b1, b2, b3, b4)]
+    assert [e["disturbed"] for e in ev] == [False, False, True, False]
+
+
+@pytest.mark.alternate_round
+def test_a_room_measurement_someone_moved_in_is_not_called_busy(cfg, tmp_path):
+    """Someone moved while measuring and even the quiet part is over 1.3x the run's quietest: the line still says
+    someone moved (it already asks to measure again), not "Room was busy"."""
+    app = _app(cfg, tmp_path, baseline=False, record=True)
+    d, secs = float(cfg["baseline"]["delay_s"]), float(cfg["baseline"]["bench_s"])
+    app.on_key_now("ctrl+b", 50.0)
+    _capture_cols(app, 50.0, 50.0 + d + secs + 0.5, 1.0, 0)
+    app._timers(time.monotonic())
+    e0 = app.chain.baseline.e0
+    app.on_key_now("ctrl+b", 200.0)
+    _capture_cols(app, 200.0, 200.0 + d + secs + 0.5, 2.0, 1, loud=(200.0 + d + 5.0, 200.0 + d + 8.0, 50.0))
+    app._timers(time.monotonic())
+    assert app.chain.baseline.disturbed and app.chain.baseline.e0 > 1.3 * e0 and app.quiet_e0 == e0
+    assert app.view(time.monotonic())["hint"] == (MOVED, screen.STATUS["amber"])
+    assert app.hint_ev[3] == "Measure the room again"
+
+
+@pytest.mark.alternate_round
+def test_a_room_measurement_saved_by_the_older_app_is_offered(cfg, tmp_path):
+    """state/baseline_live.json as the app wrote it before disturbed and d existed: loaded at start-up as a still
+    room's measurement and offered by Use last measurement."""
+    n = int(cfg["dsp"]["nfft"]) // 2 + 1
+    with open(tmp_path / "baseline_live.json", "w", encoding="utf-8") as f:
+        json.dump({"floor": [1.0] * n, "e0": 0.7, "n_cols": 187, "variant": cfg["dsp"]["variant"],
+                   "nfft": int(cfg["dsp"]["nfft"]), "created": time.time() - 120}, f)
+    app = App(cfg, state_dir=str(tmp_path), log=RunLog(None), headless=True)
+    b = app.cached
+    assert b is not None and b.e0 == 0.7 and not b.disturbed and b.d == 0.0
+    _type(app, [app.view(time.monotonic())["buttons"]["reuse_baseline"]["key"]])
+    assert app.chain.baseline is b and app.quiet_e0 == 0.7
+    assert app.view(time.monotonic())["hint"][0] == "Using the last measurement."
 
 
 @pytest.mark.alternate_round
