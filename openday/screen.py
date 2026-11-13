@@ -4,11 +4,11 @@ The view is the plain dictionary App.view builds (app.py); `Screen.render` draws
 This file, in order:
   1. Colours and text sizes.
   2. The layout, in figure coordinates (every size follows the window height, so it is the same at any shape), and
-     the helpers that place the operator's buttons (show_row, show_extra, hint_x1, top_boxes, redo_button) and the
-     card's text (card_baselines).
+     the helpers that place the operator's buttons (show_row, show_extra, hint_x1, top_boxes, redo_button), the
+     card's text (card_baselines) and the lane above the 3D picture (ridge_box).
   3. Key names: norm_key spells matplotlib's key names as the config does.
-  4. The window: Screen builds the figure once, then fits text, places buttons, draws the 3D ridges and renders
-     each view.
+  4. The window: Screen builds the figure once, then fits text, places buttons, draws the 3D ridges and the lane,
+     and renders each view.
 
 Driven from the capture loop's tick (as the thesis's live screen does): `draw_idle()` then `flush_events()`. Every
 matplotlib key shortcut is switched off before the figure exists, so typing a name cannot save, quit or rescale.
@@ -21,7 +21,7 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from openday import chain
+from openday import chain, lane
 
 # --- 1. Colours and text sizes ---
 
@@ -105,6 +105,15 @@ WF_LOW = (GRAPH_X0, _WF_Y0, _GW, TILE_MID - 0.01 - _WF_Y0)
 # The caption sits in the top-right corner, like the waterfall's; only the oldest, faintest ridges can reach up
 # there, so it has no backing (that would cut them off in a straight line).
 RX0, RF, RW, RDX, RDY, RH = 0.012, 0.21, 0.66, 0.25, 0.32, 0.225
+# The lane (lane.show; openday/lane.py decides where the marker is): a band at the top of the graphs' column, level
+# with the top row of small buttons (LANE_BOX), START at its left, then the track to the X (a cross, like the tape on
+# the floor) and after it the words (lane.WORDS, the widest kept free). The marker is a dot on the track, and the track
+# behind it fills in the same colour (LANE_FILL_ALPHA); at rest (no walk) only START, the track and the X, dim. With
+# the lane the 3D picture starts under the band, at the second row's top (ridge_box): it is that much shorter. Sizes
+# in points at BASE_H (they follow the window height, as the texts do).
+LANE_BOX = (GRAPH_X0, TOP_Y, _GW, TOP_H)
+LANE_PT, LANE_DOT_PT, LANE_X_PT, LANE_X_LW, LANE_TRACK_PT, LANE_GAP_PT = 20, 21, 16, 3.5, 6, 7
+LANE_FILL_ALPHA = 0.5
 AXIS_PT, TICK_PT = 14, 12                              # the graphs' axis titles and their numbers
 RIDGE_CAPTION = "What the Wi-Fi sees: each subcarrier's amplitude"
 RIDGE_UP = "Amplitude change"                          # the upright's title
@@ -233,6 +242,15 @@ def card_baselines() -> dict:
     return {"sub": sub / h, "big": big / h}
 
 
+def ridge_box(with_lane: bool) -> tuple:
+    """The 3D picture's box: from above the waterfall to the graphs' top (RIDGE_BOX), or, with the lane above it,
+    to the second row of small buttons' top."""
+    if not with_lane:
+        return RIDGE_BOX
+    x, y, w, _ = RIDGE_BOX
+    return (x, y, w, TOP_Y - TOP_GAP - y)
+
+
 def redo_button(cfg: dict) -> bool:
     """Uzayr's learning walks are kept across players (pools.uzayr_reuse_min > 0): Redo my walks."""
     return float(cfg["pools"].get("uzayr_reuse_min", 0) or 0) > 0
@@ -327,10 +345,15 @@ class Screen:
         for sp in self.ax.spines.values():
             sp.set_color(PANEL)
         self.ridge_error: Optional[Exception] = None       # the last fault drawing the ridges, for the app's log
-        self._make_ridge(cfg)
+        self.lane_error: Optional[Exception] = None        # the same for the lane
+        self.lane_on = lane.enabled(cfg)                   # the lane above the 3D picture (lane.show)
+        self.ridge_box = ridge_box(self.lane_on)
+        self._make_ridge(cfg, self.ridge_box)
+        if self.lane_on:
+            self._make_lane()
         # (in the middle of the ridges' box, above the open box's top edge)
         sx = (GRAPH_X0 + GRAPH_X1) / 2
-        sy = RIDGE_BOX[1] + RIDGE_BOX[3] / 2
+        sy = self.ridge_box[1] + self.ridge_box[3] / 2
         self.silent = T(sx, sy, "", 26, color=STATUS["red"], ha="center", weight="bold", fit_x=GRAPH_X1 - 0.01)
 
         # tiles
@@ -515,6 +538,8 @@ class Screen:
             self._fit(t)
         self._even_tiles()
         self._place_light()
+        if getattr(self, "lane_on", False):
+            self._place_lane()
         if getattr(self, "row", None):                     # the row's one size for this window size
             bs = self.buttons
             self._row_size = min(self._label_size(bs[a]["text"], label) for a in self.row if a in ROW_LABELS
@@ -745,12 +770,13 @@ class Screen:
         self.ax.set_yticks(np.arange(1.0, float(self.u["speed_max_mps"]) - 0.25, 1.0))
 
     # -- the ridges ------------------------------------------------------------------------------
-    def _make_ridge(self, cfg: dict) -> None:
-        """The ridge box: one PolyCollection, the rows of bars drawn in order from the back so a single artist hides
-        what is behind. Under them the 3D frame (floor edges, ticks, the upright) and its labels."""
+    def _make_ridge(self, cfg: dict, box: tuple = RIDGE_BOX) -> None:
+        """The ridge box (box: ridge_box): one PolyCollection, the rows of bars drawn in order from the back so a
+        single artist hides what is behind. Under them the 3D frame (floor edges, ticks, the upright) and its
+        labels."""
         from matplotlib.collections import LineCollection, PolyCollection
         from matplotlib.colors import to_rgba
-        self.rax = self.fig.add_axes(list(RIDGE_BOX), facecolor=BG)
+        self.rax = self.fig.add_axes(list(box), facecolor=BG)
         self.rax.set_xlim(0, 1)
         self.rax.set_ylim(0, 1)
         self.rax.set_xticks([])
@@ -781,7 +807,7 @@ class Screen:
                                                 ha="center", va="top", ax=self.rax))
         # each axis' title in line with it: "Subcarrier" centred under its numbers, RIDGE_UP along the
         # upright in the waterfall's title's column (AXIS_TITLE_X), so the two upright titles stand in one line
-        under = (0.97 * TICK_PT + 3.0) / (RIDGE_BOX[3] * BASE_H * 72.0)   # a line of numbers and a gap, box units
+        under = (0.97 * TICK_PT + 3.0) / (box[3] * BASE_H * 72.0)   # a line of numbers and a gap, box units
         self.ridge_labels.append(self._text(RX0 + RW / 2, RF - tk - 0.012 - under, "Subcarrier", AXIS_PT,
                                             color=INK2, ha="center", va="top", ax=self.rax))
         oldest = (self.ridge_n - 1) * hop / fs             # seconds back to the oldest ridge
@@ -863,6 +889,106 @@ class Screen:
         self.ridge_pc.set_edgecolor(self._bg_rgba)
         self.ridge_pc.set_linewidth(RIDGE_EDGE)
 
+    # -- the lane ---------------------------------------------------------------------------------
+    def _make_lane(self) -> None:
+        """The lane's band (LANE_BOX): START, the track, the X, the marker and the track filled behind it, the words.
+        Plain figure shapes, like the buttons; placed for the window by _place_lane, drawn by _render_lane."""
+        from matplotlib.lines import Line2D
+        from matplotlib.patches import Rectangle
+        x, y, w, h = LANE_BOX
+        self.lane_y = y + h / 2
+        self.lane_x0 = self.lane_x1 = x                    # the track's two ends (_place_lane)
+        self.lane_box = Rectangle((x, y), w, h, transform=self.fig.transFigure, visible=False)   # its place only
+        self.lane_start = self._text(x, self.lane_y, "START", LANE_PT, color=MUTED, weight="bold",
+                                     fit_x=x + 0.25 * w)
+        self.lane_words = self._text(x, self.lane_y, "", LANE_PT, color=INK, fit_x=x + w)
+        self.lane_track = Rectangle((x, y), 0.0, 0.0, transform=self.fig.transFigure, color=BTN, lw=0, zorder=2)
+        self.lane_fill = Rectangle((x, y), 0.0, 0.0, transform=self.fig.transFigure, color=THIS, lw=0, zorder=2.1,
+                                   visible=False)
+        self.lane_x = Line2D([x], [self.lane_y], marker="x", ls="none", color=MUTED, transform=self.fig.transFigure,
+                             zorder=2.2)
+        self.lane_dot = Line2D([x], [self.lane_y], marker="o", ls="none", color=THIS, markeredgecolor=BG,
+                               transform=self.fig.transFigure, zorder=2.3, visible=False)
+        self.fig.patches.extend([self.lane_box, self.lane_track, self.lane_fill])
+        for ln in (self.lane_x, self.lane_dot):
+            self.fig.add_artist(ln)
+        self._lane_shown: Optional[tuple] = None           # (frac, colour, fade) last drawn
+
+    def _place_lane(self) -> None:
+        """The track from START (its words, then a gap and the dot's half) to the X, which ends where the widest of
+        lane.WORDS still fits after it, inside the band; the dot, the X and the track sized for this window."""
+        r = self.fig.canvas.get_renderer()
+        s = self.fig.get_figheight() / BASE_H
+        fw, fh = self.fig.get_figwidth(), self.fig.get_figheight()
+        fx = lambda p: p * s / 72.0 / fw                   # points (at BASE_H) -> figure units  # noqa: E731
+        fy = lambda p: p * s / 72.0 / fh                   # noqa: E731
+        inv = self.fig.transFigure.inverted()
+        x, y, w, h = LANE_BOX
+        t = self.lane_words
+        text, size = t.get_text(), t.get_fontsize()
+        t.set_fontsize(t._base_size * s)
+        widest = 0.0
+        for word in lane.WORDS:
+            t.set_text(word)
+            e = t.get_window_extent(r)
+            widest = max(widest, (inv.transform((e.x1, 0))[0] - inv.transform((e.x0, 0))[0]))
+        t.set_text(text)
+        t.set_fontsize(size)
+        start_x1 = inv.transform((self.lane_start.get_window_extent(r).x1, 0))[0]
+        half = fx(max(LANE_DOT_PT, LANE_X_PT + LANE_X_LW) / 2)
+        self.lane_x0 = start_x1 + fx(LANE_GAP_PT) + half
+        self.lane_x1 = x + w - widest - fx(LANE_GAP_PT) - half
+        th = fy(LANE_TRACK_PT)
+        self.lane_track.set_bounds(self.lane_x0, self.lane_y - th / 2, self.lane_x1 - self.lane_x0, th)
+        self.lane_fill.set_y(self.lane_y - th / 2)
+        self.lane_fill.set_height(th)
+        self.lane_fill.set_x(self.lane_x0)
+        self.lane_x.set_data([self.lane_x1], [self.lane_y])
+        self.lane_x.set_markersize(LANE_X_PT * s)
+        self.lane_x.set_markeredgewidth(LANE_X_LW * s)
+        self.lane_dot.set_markersize(LANE_DOT_PT * s)
+        self.lane_dot.set_markeredgewidth(1.5 * s)
+        t.set_x(self.lane_x1 + half + fx(LANE_GAP_PT))
+        self._fit(t)                                       # (fitted again where it now starts)
+        self._lane_shown = None                            # (drawn again for this size)
+
+    def _render_lane(self, lv: Optional[dict]) -> None:
+        """lv = {"frac": 0..1 or None (no marker), "text", "colour", "fade": 0..1} (App._lane_view). At rest (no
+        marker) START and the X are dim; with a marker they are lit, the dot and the filled track in its colour, the
+        words beside the X, all fading with "fade"."""
+        lv = lv or {}
+        frac, fade = lv.get("frac"), min(max(float(lv.get("fade") or 0.0), 0.0), 1.0)
+        on = frac is not None and fade > 0.0
+        state = (round(float(frac), 4) if on else None, lv.get("colour") if on else None, round(fade, 3) if on else 0)
+        self._set(self.lane_words, (lv.get("text") or "") if on else "")
+        if state == self._lane_shown:
+            return
+        self._lane_shown = state
+        ink = INK2 if on else MUTED
+        self.lane_start.set_color(ink)
+        self.lane_x.set_color(ink)
+        self.lane_words.set_alpha(fade if on else 1.0)
+        for a in (self.lane_dot, self.lane_fill):
+            a.set_visible(on)
+        if not on:
+            return
+        colour = lv.get("colour") or THIS
+        xd = self.lane_x0 + min(max(float(frac), 0.0), 1.0) * (self.lane_x1 - self.lane_x0)
+        self.lane_dot.set_data([xd], [self.lane_y])
+        self.lane_dot.set_markerfacecolor(colour)
+        self.lane_dot.set_alpha(fade)
+        self.lane_fill.set_width(xd - self.lane_x0)
+        self.lane_fill.set_facecolor(colour)
+        self.lane_fill.set_alpha(LANE_FILL_ALPHA * fade)
+
+    def _lane_failed(self, exc: Exception) -> None:
+        """A fault drawing the lane: no dot and no fill this frame (drawn afresh the next), the fault kept for the
+        app's log (lane_error); the rest of the frame is drawn as usual."""
+        self.lane_error = exc
+        self._lane_shown = None
+        for a in (self.lane_dot, self.lane_fill):
+            a.set_visible(False)
+
     # -- drawing --------------------------------------------------------------------------------
     def render(self, vm: dict) -> None:
         """Update every artist from the view model (see App.view)."""
@@ -898,6 +1024,11 @@ class Screen:
             self.ridge_pc.set_verts([])
             self.ridge_error = exc
         self._set(self.silent, vm["silent"])
+        if self.lane_on:                                   # the lane above the 3D picture (a fault there never
+            try:                                           # stops the rest of the frame: the app logs it)
+                self._render_lane(vm.get("lane"))
+            except Exception as exc:  # noqa: BLE001
+                self._lane_failed(exc)
         changed = False                                    # a row or a "like ..." note changed: even them again
         for name, t in self.tiles.items():
             tv = vm["tiles"].get(name, {})

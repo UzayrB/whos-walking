@@ -6,7 +6,7 @@ This file, in order:
      BOTH_V), and the captions of the main path (FLOW, flow).
   2. An app with a pretend receiver: _Shots makes the apps and saves each shot; signal (pretend packets), echo
      (the waterfall) and ridges (the 3D picture) fill the graphs.
-  3. Clicking and walking through the app: start, walk, keys, learn, age.
+  3. Clicking and walking through the app: start, walk, walked (part of a walk: the lane), keys, learn, age.
   4. The two montages: flow.png and lights.png.
   5. Every screen, in order: run, then the main path, the screens off it, the next player (Uzayr's walks
      kept) and the notices.
@@ -260,6 +260,18 @@ def walk(a: App, f: Optional[tuple], decision: Optional[models.Decision] = None,
     assert a.walk is None, "the synthetic walk did not end"
 
 
+def walked(a: App, f: tuple, secs: Optional[float] = None, start: float = 0.0) -> None:
+    """A walk's columns (those walk() feeds) from `start` s for `secs` s (None: to the end) into the walk under way,
+    through the app's own path: part of a walk shows the walker part-way on the lane above the 3D picture, and the
+    rest (start = the same secs) finishes the walk with every column fed once, as walk() does."""
+    c = _columns(a, a.walk["t_dev"], f)
+    i = int(round(start / a.hop_s))
+    j = len(c.t) if secs is None else i + int(round(secs / a.hop_s))
+    a._feed_walk(chain.Columns(c.t[i:j], None, c.gap[i:j], None, c.energy[i:j], c.f50[i:j], c.f90[i:j]))
+    if secs is not None:
+        assert a.walk is not None and not a.walk["w"].ended, "the walk ended part-way"
+
+
 def keys(a: App, ks) -> None:
     for k in ks:
         a.on_key_now(k, time.monotonic())
@@ -431,8 +443,9 @@ def _main_path(sh: _Shots) -> None:
     f0 = (UZAYR if first == "uzayr" else VISITOR)[0]
     start(a, ago=3.0)
     echo(a, "walking", speed=f0[0])
+    walked(a, f0, 1.6)                                     # (the lane: part-way)
     sh.shot(a, "07_walking_learning")
-    a._feed_walk(_columns(a, a.walk["t_dev"], f0))
+    walked(a, f0, start=1.6)                               # (the rest of the walk)
     assert a.walk is None, "the synthetic walk did not end"
     sh.act()
     echo(a, "walked", speed=f0[0])
@@ -459,6 +472,7 @@ def _main_path(sh: _Shots) -> None:
     sh.shot(a, "14_game")
     start(a, ago=3.0)
     echo(a, "walking", speed=1.12)
+    walked(a, (1.12, 120, 2.4, 0.40), 2.5)                 # (the lane: nearly there)
     sh.shot(a, "15_walking_game")
     a.discard()
     walk(a, (1.13, 121, 2.4, 0.41), decision=ANSWER_V)

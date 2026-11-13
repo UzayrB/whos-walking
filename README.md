@@ -84,7 +84,7 @@ To stop the app, click **Quit** (top right), then **Yes, quit**.
 | 3 | <img src="reports/screens/05_name_box.png" width="320"> | the visitor types, then **OK** | Their first name, then OK or Enter. No name gives "Guest". Names are never saved. **Cancel** goes back. |
 | 4 | <img src="reports/screens/06_learning_lerato_turn.png" width="320"> | **Start walk**, twice | The visitor walks first, twice. The card says whose turn it is, and the dots fill in (top row them, bottom row you). After the first walk: "Got it! Once more."; after the second: "Got it! Now Uzayr walks 5 times." (or the game, when your walks are kept). Nothing else to click: each walk goes to whoever's turn it was. If the wrong person walked, click **Undo walk** and that turn is walked again. |
 | 5 | <img src="reports/screens/09_learning_uzayr_turn.png" width="320"> | **Start walk**, 5 times (you walk) | Then your five walks: click **Start walk** and walk to the X yourself. The card counts them ("Walk 3 of 5: to the X, then stand still."), and your row has five dots. **Skipped** when your walks from an earlier round are under 25 minutes old (below): then the game starts right after the visitor's two walks ([picture](reports/screens/28_reuse_learning.png): your row of dots is already full). |
-| 6 | <img src="reports/screens/07_walking_learning.png" width="320"> | nothing (or **They've stopped**) | The walker goes to the X and stands still. The walk ends by itself under two seconds after they stop. You can click **They've stopped** once they stand on the X. Do so for every walker when people move nearby ([Your routine at the stand](#your-routine-at-the-stand)); otherwise you don't need to. A click that comes after the walk has already ended does nothing: the big button stays grey for 3 s after every walk. |
+| 6 | <img src="reports/screens/07_walking_learning.png" width="320"> | nothing (or **They've stopped**) | The walker goes to the X and stands still. The lane above the pictures shows them on their way, from START to the X, and says "On the X" when the walk ends ([The screen](#the-screen)). The walk ends by itself under two seconds after they stop. You can click **They've stopped** once they stand on the X. Do so for every walker when people move nearby ([Your routine at the stand](#your-routine-at-the-stand)); otherwise you don't need to. A click that comes after the walk has already ended does nothing: the big button stays grey for 3 s after every walk. |
 | 7 | <img src="reports/screens/14_game.png" width="320"> | **Start walk** | After the last learning walk: "Got you both! Now the guessing game." (or "Got it! Now the guessing game." when your walks were kept). You **or** the visitor walks; the crowd can choose. |
 | 8 | <img src="reports/screens/17_answer_lerato.png" width="320"> | **Next walk** | Under two seconds after they stop: who it was, "How sure", and what told you apart ("Told apart by: speed and leg swing"). The tiles say which person each reading was "like". Nothing to click but **Next walk**: the visitors can see for themselves whether the guess was right. There is no score on screen. |
 | 9 | <img src="reports/screens/36_walk_once_more.png" width="320"> | **Start walk** | A close call names nobody yet: "Walk once more!" ("Too close to call: the same walker again."). The **same** person walks again from the back mark (on the thesis people about 1 game walk in 6 (16 %); in the home tests about 1 in 4, and 1 in 2 in a disturbed room). |
@@ -368,11 +368,29 @@ and its speed was within 0.06 m/s of distance ÷ time on average.
 ## The screen
 
 - **Top line:** "Uzayr vs *name*" at the left, the light in the top-right corner.
-- **Two columns under it.** Left: the two pictures, as wide and as tall as the screen allows; their top lines up
-  with the small buttons' top. Right: the small buttons in two rows (Redo my walks, End game, Measure room; then
-  Details and Quit), exactly as wide as the four tiles under them. Both pictures' upright titles ("Amplitude
-  change", "Speed (m/s)") stand in one column at the left edge, and the 3D picture's upright sits right above
-  the speed picture's axis.
+- **Two columns under it.** Left: the lane, level with the top row of small buttons, then the two pictures, as wide
+  and as tall as the screen allows; the 3D picture's top lines up with the second row of small buttons. Right: the
+  small buttons in two rows (Redo my walks, End game, Measure room; then Details and Quit), exactly as wide as the
+  four tiles under them. Both pictures' upright titles ("Amplitude change", "Speed (m/s)") stand in one column at
+  the left edge, and the 3D picture's upright sits right above the speed picture's axis.
+- **Above the pictures: the lane** ([picture](reports/screens/15_walking_game.png)): where the walker is, from START
+  (the back mark) to the X, as a dot on a track that fills in behind it; beside the X a few words: "Walking …",
+  "Nearly there", "On the X". Between walks only START, the track and the X show, dim. The dot moves only while the
+  Wi-Fi sees someone moving: it is the Speed tile's own reading added up from the click (the distance walked), over
+  the distance from the back mark to the X (`lane.length_m` in `configs/openday.yaml`, 3.2 m; leaving out the odd
+  reading over 2 m/s, which at home was a far walker's noise). It never goes back. From three quarters of the way it
+  slows down, and it never reaches the X by itself: it goes onto the X when the walk ends (the moment its readings
+  are taken, a little before the answer shows), and stays there while the walker goes back, fading out after 3 s. A
+  missed walk, **Cancel walk**, **Undo walk** and a lost signal leave it at rest (no dot), and every walk starts
+  again from START (a second look too). The dot is in the colour of whose learning turn it is (the visitor's orange,
+  Uzayr's purple), yellow in the game. It is only a picture: nothing in it reaches a walk, its end or an answer, and
+  `lane.show: false` takes it away (the 3D picture then reaches up to the small buttons' top again, as before). How
+  close it is: halfway along, the dot was about 0.3 to 0.4 m from the walker on the thesis walks (a 5 m line with a
+  press at every metre, counting the screen's own delay of about 0.2 s), and about 0.6 m on the home walks (no
+  presses there: a steady walk assumed). What it cannot do: it does not see where you stand, only how far you have
+  walked. At home the dot often waits 1 to 2 s on START, while the walker is far from the boards and faint.
+  "On the X" comes when the app sees the walk end: about a second after the walker stops, sometimes 2 to 3 s (sooner
+  with **They've stopped**), and in about 1 walk in 4 or 5 a little early, because that walk ended early.
 - **Left, top:** "What the Wi-Fi sees: each subcarrier's amplitude" (top right of the picture): how much the Wi-Fi
   signal's amplitude wobbles on every subcarrier, drawn in 3D as bars, one bar per subcarrier, so each subcarrier's
   value stands on its own. There is a row of bars every 0.16 s for the last 4 s. The axes are labelled. Left to right
@@ -513,6 +531,7 @@ follow it:
 - `chain.py` turns the receiver's Wi-Fi packets into the speed picture (one column every 53 ms) and the 3D bars.
 - `walks.py` collects one walk's columns, decides when the walk ended and measures it (speed, steps, swing,
   bounce, plus the thesis's gait features).
+- `lane.py` adds up the walk's speed into where the walker is on the lane (for the screen only).
 - `models.py` decides whose walk it was by comparing it with each person's learning walks.
 - `app.py` is the show: what each click does, whose turn it is, the light, and what the screen should say. It builds
   one plain dictionary, the "view", and at the bottom it starts the app live or on a replay.
@@ -529,6 +548,7 @@ The other files are tools you need only away from the show: `evaluate.py` (how g
   - `__init__.py`: where things live, the settings loader and the participant codes.
   - `chain.py`: Wi-Fi packets → the speed picture and the 3D bars.
   - `walks.py`: one walk — when it ends, its four numbers, and the thesis's gait features.
+  - `lane.py`: where the walker is on the lane, START to the X (display only).
   - `models.py`: who walked — the nearest-centre rule, the trained model, the learning walks.
   - `app.py`: the app — clicks, turns, the light, what the screen says — and how it runs live or on a replay.
   - `screen.py`: the window; it only draws.
@@ -541,9 +561,10 @@ The other files are tools you need only away from the show: `evaluate.py` (how g
 - `scripts/`: replay playlists. Walks are named by participant code.
 - `reports/`: the evaluation reports (participants by code) and the screenshots (`screens/`).
 - `tests/`: pytest, one file per part: `test_chain`, `test_walks`, `test_models` (`models.py` and `evaluate.py`'s
-  model fitting), `test_app`, `test_screen` (`screen.py` and `screenshots.py`), `test_replay` (`recordings.py` and
-  the replays), `test_bench`. `helpers.py` holds the fake receiver and the shared app drivers;
-  `overlap.py` checks that nothing on the screen overlaps; `test_zz_untouched.py` runs last and checks that
+  model fitting), `test_app`, `test_screen` (`screen.py` and `screenshots.py`), `test_lane` (`lane.py`, the lane in
+  the app and on the screen), `test_replay` (`recordings.py` and the replays), `test_bench`. `helpers.py` holds the
+  fake receiver and the shared app drivers; `overlap.py` checks that nothing on the screen overlaps;
+  `test_zz_untouched.py` runs last and checks that
   `../Code` was not touched, that no participant name is in a published file, that only code, text and
   picture files are published, and (on the laptop) that no `__pycache__` was written. Tests that need `../Code`, the
   code list or the trained model skip themselves without them.

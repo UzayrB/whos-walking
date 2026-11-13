@@ -13,8 +13,8 @@ ink (the letters drawn alone into a scratch canvas, cached), so "touching" means
   e  cut off by the edge of the screen
 Allowed: a member inside its own box, a bar inside its background, the waterfall's caption in the waterfall, the
 ridges' caption, their frame's labels and "Receiver silent" in the ridges' box (and its upright's title beside it),
-tick labels beside their own waterfall, anything the open box covers whole, and the speed line behind a text on its
-own dark backing.
+tick labels beside their own waterfall, anything the open box covers whole, the speed line behind a text on its
+own dark backing, and the lane's marker, its filled track and the X on the track (parts of one thing).
 """
 
 from __future__ import annotations
@@ -160,6 +160,18 @@ def collect(sc, r) -> list:
         else:
             text(t, f"ridge.label[{t.get_text()}]", owner="ridge")
     text(sc.silent, "ridge.silent", owner="ridge")
+    if getattr(sc, "lane_on", False):                      # the lane above the ridges: START, the track (its fill, the
+        lb = sc.lane_box.get_window_extent(r)              # X and the marker on it) and the words
+        els.append(El("lane", "box", sc.lane_box, lb, lb))
+        text(sc.lane_start, "lane.start", owner="lane")
+        text(sc.lane_words, "lane.words", owner="lane")
+        box(sc.lane_track, "lane.track", owner="lane", kind="patch")
+        if sc.lane_fill.get_visible() and sc.lane_fill.get_width() > 0:
+            box(sc.lane_fill, "lane.fill", owner="lane", kind="patch", part_of="lane.track")
+        for nm, ln in (("lane.x", sc.lane_x), ("lane.dot", sc.lane_dot)):
+            if ln.get_visible():
+                lb2 = ln.get_window_extent(r)
+                els.append(El(nm, "patch", ln, lb2, lb2, owner="lane", part_of="lane.track", z=ln.get_zorder()))
     x, y = (np.asarray(v, float) for v in sc.line.get_data())
     ok = np.isfinite(x) & np.isfinite(y)
     if ok.sum() >= 2 and sc.line.get_visible():
@@ -232,6 +244,8 @@ def check(sc, gap: float = GAP) -> list:
 
     def related(a, b) -> bool:
         if a.owner == b.name or b.owner == a.name or a.part_of == b.name or b.part_of == a.name:
+            return True
+        if a.part_of is not None and a.part_of == b.part_of:   # two parts of one thing (the lane's dot on its X)
             return True
         if (a.attached and a.attached == b.name) or (b.attached and b.attached == a.name):
             return True

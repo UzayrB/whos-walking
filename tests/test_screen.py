@@ -966,7 +966,7 @@ def test_the_frame_names_the_subcarriers_and_the_time(cfg, tmp_path):
     sc = app.screen
     box, rbox = sc.ax.get_position(), sc.rax.get_position()        # the two halves: the ridges above the waterfall
     assert (box.x0, box.y0, box.width, box.height) == pytest.approx(screen.WF_LOW)
-    assert (rbox.x0, rbox.y0, rbox.width, rbox.height) == pytest.approx(screen.RIDGE_BOX)
+    assert (rbox.x0, rbox.y0, rbox.width, rbox.height) == pytest.approx(screen.ridge_box(sc.lane_on))
     cap = sc.ridge_caption
     assert cap.get_text() == "What the Wi-Fi sees: each subcarrier's amplitude"
     assert sc.caption.get_text() == "Turned into speed: bright = movement"

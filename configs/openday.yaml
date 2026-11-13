@@ -180,6 +180,15 @@ ui:
   name_max_len: 16
   quit_confirm_s: 4.0
 
+lane:                          # the lane above the 3D picture: where the walker is, from START (the back mark) to the X
+                               # (openday/lane.py). Display only: nothing in it reaches a walk, its end, its answer or
+                               # the room level. The marker moves with the Wi-Fi speed added up from the click, slows
+                               # down near the X, and goes onto the X only when the walk ends
+  show: true                   # false: no lane, and the screen exactly as before
+  length_m: 3.2                # the back mark to the X, in metres (section 1 of the README: at least 3 m; 3.2 m at
+                               # home). Set it if your back mark is further back; a wrong length only makes the marker
+                               # run a little ahead or behind, it still lands on the X when the walk ends
+
 keys:                          # each action's keys; the comment names its button
   start_walk: [space, pagedown, right, down]   # the big button (Measure room / Start walk / They've stopped /
                                                # Next walk), sends Space

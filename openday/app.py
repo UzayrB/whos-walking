@@ -5,7 +5,8 @@ This file, in order:
   1. RunLog (the run log) and small text helpers.
   2. App: packets in (handle, tick), keys (on_key_now), the round (turns, Uzayr's kept walks, Redo my walks, the
      room measurement, walks and Undo walk), timers and the light (health), the view (view, _op_hint, _buttons,
-     _card, _dots) and the replay's summary.
+     _card, _dots; the lane above the 3D picture, display only: _new_lane, _lane_add, _lane_view) and the replay's
+     summary.
   3. Running it: the receiver's port, then run_live (the boards), run_replay (a playlist, no boards) and keytest.
 
 `handle` only queues the packet (no work, never raises). `tick` runs every loop iteration (about 150 times a
@@ -75,11 +76,13 @@ from typing import Optional
 import numpy as np
 
 import openday
-from openday import chain, models, recordings, screen, walks
+from openday import chain, lane, models, recordings, screen, walks
 
 NEEDS_BASELINE, BUSY, IDLE, NAME_ENTRY = "NEEDS_BASELINE", "BUSY", "IDLE", "NAME_ENTRY"
 ENROL_VISITOR, ENROL_UZAYR, READY, WALKING = "ENROL_VISITOR", "ENROL_UZAYR", "READY", "WALKING"
 DECIDING, RESULT = "DECIDING", "RESULT"
+LANE_HOLD_S, LANE_FADE_S = 4.0, 1.0                        # the lane: the marker stays on the X this long after a walk,
+                                                           # fading out over the last second (the walker goes back)
 AGAIN = "AGAIN"                                            # a close call: the same walker walks once more (second look)
 # (short labels, so "like {V}" has room beside them in the narrow tiles: on the MacBook "like Lerato" keeps about
 # 0.9 of its size, an 8-letter name about two-thirds, 9 letters 0.6; the steps value says "/min")
@@ -195,6 +198,10 @@ class App:
         self.ridge = chain.Ridge(cfg)
         self.ridge_cols = 0                                # waterfall columns since the ridges last restarted
         self._ridge_err_at = -1e9                          # (a ridge fault is logged at most every 10 s)
+        # the lane above the 3D picture: where the walker is, START to the X (lane.py; display only)
+        self.lane_on = lane.enabled(cfg)
+        self.lane_last: Optional[tuple] = None             # (Lane, colour, host time) of the walk last shown
+        self._lane_err_at = -1e9                           # (a lane fault is logged at most every 10 s)
         self.notice: Optional[tuple] = None                # (text, colour, until): replaces the instruction line
         self.hint_ev: Optional[tuple] = None               # (text, colour, until): an event hint for the operator
         self.misses = 0                                    # walks in a row the app did not see
@@ -328,6 +335,7 @@ class App:
             self._event("discard", walk_id=self.walk["id"], t_mono=time.monotonic(), why=why)
             self.state = self.walk["from"] if self.walk["from"] not in (RESULT, DECIDING) else self._resting()
             self.walk = None
+            self.lane_last = None                          # (the lane: back to rest, no marker)
             self.last_end_wall = time.monotonic()
             self._notice("Lost the signal. Walk again when the light is green.", "red", 4.0)
         if self.capture is not None:
@@ -429,6 +437,7 @@ class App:
             else:
                 self.prev, self.state, self.typed = self._resting(), NAME_ENTRY, ""   # (Cancel: back; on a close
                                                                                        # call "walk once more")
+                self.lane_last = None                      # (the lane: at rest)
         elif self._is(key, "wipe_visitor"):                # End game: asks first, like Quit
             if self.name is None:
                 self._hint("No player to end.")
@@ -670,6 +679,7 @@ class App:
         and the capture window record the real start, so the bench evaluation finds the same columns."""
         if self.state in (WALKING, NAME_ENTRY):
             return
+        self.lane_last = None                              # (the lane: at rest while the room is measured)
         if self.state == BUSY:                             # Ctrl+B again restarts the capture
             self.capture = None
             self.state = self.prev
@@ -809,6 +819,7 @@ class App:
 
     def wipe_visitor(self) -> None:
         self.visitor.clear()
+        self.lane_last = None                              # (the lane: at rest)
         self.name, self.vidx, self.visitor_ready, self.typed = None, None, False, ""
         self.misses = 0                                    # "Missed twice" belonged to the last player
         self._drop_close_call("the player was wiped")      # (a close call waiting for its second walk too)
@@ -864,7 +875,8 @@ class App:
         if self.look2 is not None and first is None:
             self._drop_close_call(f"walk {self.n_walks} started from {self.state}")
         self.walk = {"w": w, "screen": sw, "purpose": purpose, "t_click": t, "t_dev": t_dev,
-                     "from": AGAIN if first is not None else self.state, "id": self.n_walks}
+                     "from": AGAIN if first is not None else self.state, "id": self.n_walks,
+                     "lane": self._new_lane(t_dev, pre)}
         if first is not None:                              # (Cancel walk, or a lost signal, goes back to AGAIN)
             self.walk["second_of"] = first["id"]
             back = AGAIN
@@ -903,6 +915,7 @@ class App:
         """New columns into the running walk: first the model's window (its end makes the answer: _walk_ended), then
         the screen's (its end shows it: _walk_shown), which waits at most walk.screen_max_extra_s past the model's."""
         wk = self.walk
+        self._lane_add(wk, cols)                           # (display only: the lane above the 3D picture)
         w, sw = wk["w"], wk.get("screen")
         if not w.ended and w.add(cols):
             self._walk_ended()
@@ -948,6 +961,8 @@ class App:
                 if self.second_look and d is not None and d.not_sure:
                     rec["again"] = True                    # too close to call: the same walker walks once more
         wk["rec"] = rec
+        if rec["seen"] and wk.get("lane") is not None:     # (the lane: the walker is on the X; display only)
+            wk["lane"].arrive()
         wk["end_dev"] = w.t_end_col if w.t_end_col is not None else (w.t[-1] if w.t else wk["t_dev"])  # model's end
         wk["ended_at"] = time.monotonic()                  # (host time: _timers shows it if the columns stop coming)
         self.walk = wk                                     # (back on: shown below, or when the screen's wait ends)
@@ -965,6 +980,8 @@ class App:
             t_end_dev = win.t_end_col if win.t_end_col is not None else (win.t[-1] if win.t else wk["t_dev"])
         rec = wk["rec"]
         f = rec["f"]
+        self.lane_last = (wk.get("lane"), lane.colour_for(wk["purpose"], screen.UZAYR, screen.VISITOR, screen.THIS),
+                          time.monotonic()) if wk.get("lane") is not None else None
         self.last_end_dev = t_end_dev                      # (the after-end lock counts from the screen's end)
         self.last_end_wall = rec["t_end_wall"] = time.monotonic()
         # on screen at the model's own end: its t_end (None after "no signal"), so the wait off logs as before it
@@ -1102,12 +1119,14 @@ class App:
             self._event("discard", walk_id=self.walk["id"], t_mono=time.monotonic())
             back = self.walk["from"]                       # (the second look: back to "walk once more")
             self.state, self.walk = back if back not in (RESULT, DECIDING) else self._resting(), None
+            self.lane_last = None                          # (the lane: back to rest, no marker)
             self.last_end_wall = time.monotonic()
             again = " Same turn again." if self.state in (ENROL_VISITOR, ENROL_UZAYR) else \
                 (" Same walker again." if self.state == AGAIN else "")
             self._notice("Walk cancelled." + again, "amber", 2.5)
             return
         rec = self.last
+        self.lane_last = None                              # (the lane: no marker for a removed walk)
         if rec is None:
             if self._can_unredo():                         # right after Redo my walks: keep his old walks
                 self._keep_old_walks()
@@ -1291,6 +1310,9 @@ class App:
         if self.screen.ridge_error is not None:            # the ridges failed to draw (the rest did): say so
             exc, self.screen.ridge_error = self.screen.ridge_error, None
             self._ridge_fault(exc)
+        if getattr(self.screen, "lane_error", None) is not None:   # the lane failed to draw (the rest did): say so
+            exc, self.screen.lane_error = self.screen.lane_error, None
+            self._lane_fault(exc)
         dt = self.screen.draw()
         fresh = self.last_pkt_wall is not None and now - self.last_pkt_wall < float(self.cfg["ui"]["lag_fresh_s"])
         lag = (time.monotonic() - self.newest_tm) if (self.newest_tm is not None and fresh) else 0.0
@@ -1354,6 +1376,63 @@ class App:
             self._ridge_err_at = time.monotonic()
             self.log(f"ridge error {type(exc).__name__}: {exc}")
 
+    # -- the lane (display only) ----------------------------------------------------------------
+    def _new_lane(self, t_dev: float, pre: chain.Columns) -> Optional[lane.Lane]:
+        """A new walk's lane (lane.show), its speed readout filled from the columns before the click; the last walk's
+        marker goes. None when the lane is off, or if it fails (the walk itself never depends on it)."""
+        self.lane_last = None
+        if not self.lane_on:
+            return None
+        try:
+            ln = lane.Lane(self.cfg, t_dev, self.chain.baseline.e0, self.hop_s)
+            ln.add(pre)
+            return ln
+        except Exception as exc:  # noqa: BLE001 - display only
+            self._lane_fault(exc)
+            return None
+
+    def _lane_add(self, wk: dict, cols: chain.Columns) -> None:
+        """The walk's new columns into its lane (display only: a fault drops the lane, never the walk)."""
+        ln = wk.get("lane")
+        if ln is None:
+            return
+        try:
+            ln.add(cols)
+        except Exception as exc:  # noqa: BLE001 - display only
+            wk["lane"] = None
+            self._lane_fault(exc)
+
+    def _lane_fault(self, exc: Exception) -> None:
+        """Log a fault in the lane (display only) at most every 10 s; the walk carries on without it."""
+        if time.monotonic() - self._lane_err_at > 10.0:
+            self._lane_err_at = time.monotonic()
+            self.log(f"lane error {type(exc).__name__}: {exc}")
+
+    def _lane_view(self, now: float) -> Optional[dict]:
+        """The lane above the 3D picture (None: lane.show is off): during a walk the marker where lane.py puts it,
+        in the colour of whose learning turn it is (a game or free walk: the last walk's yellow), with a few words
+        ("Walking ...", "Nearly there", "On the X"); after a seen walk on the X for LANE_HOLD_S, fading out over the
+        last LANE_FADE_S; otherwise at rest, no marker (a missed or cancelled walk too, and always in the name box,
+        while the room is measured and before it is)."""
+        if not self.lane_on:
+            return None
+        rest = {"frac": None, "text": "", "colour": None, "fade": 0.0}
+        if self.state in (NAME_ENTRY, BUSY, NEEDS_BASELINE):
+            return rest
+        wk = self.walk
+        ln = wk.get("lane") if wk is not None else None
+        if ln is not None:
+            return {"frac": ln.frac, "text": ln.words(), "fade": 1.0,
+                    "colour": lane.colour_for(wk["purpose"], screen.UZAYR, screen.VISITOR, screen.THIS)}
+        if self.lane_last is not None and wk is None:
+            ln, colour, at = self.lane_last
+            # (the frame's time is taken before the tick's work: in the tick a walk ends, `now` is a moment before
+            # `at`, and the marker stays on the X rather than blink off for one frame)
+            left = LANE_HOLD_S - max(0.0, now - at)
+            if ln.on_x and left > 0.0:
+                return {"frac": 1.0, "text": ln.words(), "colour": colour, "fade": min(1.0, left / LANE_FADE_S)}
+        return rest
+
     def view(self, now: float) -> dict:
         light, light_text, silent = self.health(now)
         st = self.state
@@ -1375,6 +1454,11 @@ class App:
         except Exception as exc:  # noqa: BLE001
             vm["ridge"] = (np.zeros((0, 2)), np.zeros(0))
             self._ridge_fault(exc)
+        try:                                               # the lane (display only)
+            vm["lane"] = self._lane_view(now)
+        except Exception as exc:  # noqa: BLE001
+            vm["lane"] = {"frac": None, "text": "", "colour": None, "fade": 0.0} if self.lane_on else None
+            self._lane_fault(exc)
         # tiles
         rec = self.last
         f = rec["f"] if rec is not None and st in (DECIDING, RESULT, READY, IDLE, ENROL_UZAYR, ENROL_VISITOR, AGAIN) \
