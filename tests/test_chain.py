@@ -86,9 +86,10 @@ def test_device_clock_unwraps_and_restarts(cfg):
 
 # ---- the room measurement (Measure room): someone moving while it measures ------------------------------------------
 
-def _room(cfg, spans, seed=1):
-    """A Measure room capture from synthetic packets: the last 10 s (baseline.live_s) of spans (seconds, tone Hz,
-    depth) played back to back; a tone is someone moving."""
+def _room(cfg, spans, seed=1, keep_s=10.0):
+    """A Measure room capture from synthetic packets: the last keep_s of spans (seconds, tone Hz, depth) played back
+    to back; a tone is someone moving. 10 s unless said: a short capture (Measure room's own length,
+    baseline.live_s, is 30 s)."""
     lts, tms, ds, lt0 = [], [], [], 5_000_000
     for i, (secs, f, depth) in enumerate(spans):
         lt, tm, data = packets(secs, f, depth=depth, seed=seed + i, lt0_us=lt0)
@@ -100,7 +101,7 @@ def _room(cfg, spans, seed=1):
         lt0 = int(lt[-1]) + 6667
     ch, out = _run(cfg, None, np.concatenate(lts), np.concatenate(tms), np.concatenate(ds), 64)
     t, p, g = (np.concatenate([getattr(c, k) for c in out]) for k in ("t", "power", "gap"))
-    m = t > t[-1] - 10.0
+    m = t > t[-1] - keep_s
     return ch, chain.Columns(t[m], p[m], g[m])
 
 
@@ -128,6 +129,22 @@ def test_someone_moving_while_the_room_is_measured_leaves_its_quiet_part(cfg):
         b = chain.room_baseline(c, cfg, ch.freqs, ch.spec.variant, ch.spec.nfft)
         assert b.disturbed and b.d >= float(cfg["baseline"]["quiet_flag_d"]), (seed, b.d)
         assert whole > 2.0 * still and 0.6 * still < b.e0 < 1.25 * still, (seed, still, whole, b.e0)
+
+
+def test_someone_moving_in_a_whole_measure_room_is_caught_too(cfg):
+    """Measure room's own length (baseline.live_s, 30 s): a still room is not marked disturbed; someone moving for
+    5 s of it is, and the level comes from its quiet part, near the still room's."""
+    secs = float(cfg["baseline"]["live_s"])
+    assert secs >= 20.0, f"Measure room is {secs:g} s (baseline.live_s); 10 s missed someone moving at home: use 30"
+    for seed in (1, 2, 3):
+        ch, c = _room(cfg, [(secs + 2.0, 0.0, 0.0)], seed, secs)
+        b = chain.room_baseline(c, cfg, ch.freqs, ch.spec.variant, ch.spec.nfft)
+        assert not b.disturbed and b.d < float(cfg["baseline"]["quiet_flag_d"]), (seed, b.d)
+        still = b.e0
+        ch, c = _room(cfg, [(12.0, 0.0, 0.0), (5.0, 15.0, 0.02), (secs - 15.0, 0.0, 0.0)], seed, secs)
+        b = chain.room_baseline(c, cfg, ch.freqs, ch.spec.variant, ch.spec.nfft)
+        assert b.disturbed and b.d >= float(cfg["baseline"]["quiet_flag_d"]), (seed, b.d)
+        assert 0.6 * still < b.e0 < 1.25 * still, (seed, still, b.e0)
 
 
 def test_a_room_measurement_saved_before_disturbed_existed_still_loads():

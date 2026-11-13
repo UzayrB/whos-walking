@@ -18,6 +18,13 @@ The screen: crowd text on the card and operator hints beside the buttons, notice
 instruction line, one main button that never moves (Start walk / They've stopped / Next walk), no public score,
 and the room measured with Measure room (after a countdown).
 
+The room level of the day: the first measurement of the calendar day that nobody moved in is the one in use, and
+it is kept in state/baseline_live.json, so Use last measurement offers it all day, also after a restart. A later
+Measure room replaces it only when clearly quieter (under baseline.quieter_ratio times it); anything else, or one
+someone moved in, keeps it (the operator's line says so, and Uzayr's kept walks stay). live --new-room forgets it
+(the boards were moved). A test recording (--record) always measures, always uses its own measurement, as the bench
+tools expect, and never writes the file.
+
 The round (pools.enrol_order visitor_first): New player, the name, the visitor's pools.n_enrol learning walks, then
 Uzayr's, then the game (alternate: Uzayr first, then taking turns). Uzayr's learning walks are kept in memory across
 players and reused while fresh (pools.uzayr_reuse_min: all younger than that when New player is clicked, taken after
@@ -110,11 +117,23 @@ def _times(k: int) -> str:
     return {1: "once", 2: "twice"}.get(k, f"{k} times")
 
 
+def _today(t: float) -> bool:
+    """time.time() t is on today's calendar date (the laptop's clock): the room level is kept for the day."""
+    return time.strftime("%Y%m%d", time.localtime(t)) == time.strftime("%Y%m%d")
+
+
+def _age_text(minutes: float) -> str:
+    """How old the last room measurement is, for its button: "7 min old", "3 h old" (whole hours)."""
+    m = int(round(minutes))
+    return f"{m} min old" if m < 60 else f"{m // 60} h old"
+
+
 class App:
     """One run of the demo: the chain, the round's state and the screen."""
 
     def __init__(self, cfg: dict, *, state_dir: str, log: RunLog, headless: bool = False, fullscreen: bool = True,
-                 record_dir: Optional[str] = None, baseline_cache: bool = True, keep_log: bool = False) -> None:
+                 record_dir: Optional[str] = None, baseline_cache: bool = True, keep_log: bool = False,
+                 new_room: bool = False) -> None:
         self.cfg, self.log, self.keep_log = cfg, log, keep_log
         self.names = list(cfg["features"]["names"])
         self.use = list(cfg["classifier"].get("use", self.names))
@@ -181,15 +200,19 @@ class App:
         self.misses = 0                                    # walks in a row the app did not see
         self.last_end_wall: Optional[float] = None         # host time the last walk ended (the light's grey)
         self.busy_since: Optional[float] = None            # busy >= health.busy_amber since then
-        self.quiet_e0: Optional[float] = None              # the quietest room measurement this run (1.3x check)
+        self.quiet_e0: Optional[float] = None              # the quietest room measurement this run (a recording's
+                                                           # 1.3x check)
         self.screen = screen.Screen(cfg, self.on_key, self.on_close, headless=headless, fullscreen=fullscreen,
                                 record=record_dir is not None)
         nb = int(np.sum(chain.speed_of(self.chain.freqs, cfg) <= float(cfg["ui"]["speed_max_mps"])))
         self.n_bins = max(nb, 2)
         df = self.chain.freqs[1] - self.chain.freqs[0]
         self.screen.set_speed_axis(float(chain.speed_of(self.chain.freqs[self.n_bins - 1] + df / 2, cfg)), self.n_bins)
+        if new_room and self.baseline_path and os.path.exists(self.baseline_path):
+            os.remove(self.baseline_path)                  # --new-room: the boards were moved, today's level is wrong
         self.cached = None if record_dir else self._load_cached_baseline()   # a bench run always takes Ctrl+B
-        self.log(f"start variant {cfg['dsp']['variant']} nfft {cfg['dsp']['nfft']} record {bool(record_dir)}")
+        self.log(f"start variant {cfg['dsp']['variant']} nfft {cfg['dsp']['nfft']} record {bool(record_dir)}"
+                 + (" new room: today's room level forgotten" if new_room else ""))
 
     # -- run_capture consumer -------------------------------------------------------------------
     def handle(self, rec) -> None:
@@ -311,7 +334,9 @@ class App:
             self.log(f"baseline dropped: {why.lower()}")
             self.capture = None
             self.state = NEEDS_BASELINE if self.chain.baseline is None else self._resting()
-            self._hint(f"{why}: click Measure room again.", "amber", 8.0)
+            level = self._day_level() if self.chain.baseline is not None else None   # (today's level stays in use)
+            self._hint(f"{why}: kept the earlier room level {level.e0:.2f}." if level is not None
+                       else f"{why}: click Measure room again.", "amber", 8.0)
 
     def _recent_columns(self) -> chain.Columns:
         if not self.recent:
@@ -428,11 +453,20 @@ class App:
         return lock - since if since is not None and 0.0 <= since < lock else 0.0
 
     def _reusable(self) -> Optional[chain.Baseline]:
-        """The cached room measurement if it is still young enough to reuse (checked now, not only at start-up)."""
+        """The cached room measurement if it is from today (checked now, not only at start-up)."""
         b = self.cached
-        if b is None or (time.time() - b.created) / 60.0 > float(self.cfg["baseline"]["max_reuse_min"]):
+        if b is None or not _today(b.created):
             return None
         return None if b.disturbed else b                  # (someone moved during it: measure again instead)
+
+    def _day_level(self) -> Optional[chain.Baseline]:
+        """Today's room level: a measurement nobody moved in, today. It is the one in use (only a clearly quieter
+        measurement replaces it), or, until the first measurement after a restart, the one Use last measurement
+        offers. None while there is none, and in a test recording (it uses every measurement)."""
+        if self.record_dir:
+            return None
+        b = self.chain.baseline if self.chain.baseline is not None else self._reusable()
+        return None if b is None or b.disturbed else b
 
     def _vname(self, n: int) -> str:
         """The visitor's name in at most n characters ("the visitor" when there is none): the whole name, else its
@@ -672,14 +706,39 @@ class App:
             return
         self._event("baseline_end", t_mono=time.monotonic(), n_cols=len(cols), e0=b.e0, disturbed=b.disturbed,
                     d=b.d)
+        ratio = float(self.cfg["baseline"].get("recheck_ratio", 1.3))
+        level = self._day_level()
+        quieter = float(self.cfg["baseline"].get("quieter_ratio", 0.9))
+        if level is not None and (b.disturbed or b.e0 >= quieter * level.e0):   # not clearly quieter: keep today's
+            return self._keep_level(b, level, ratio)
         ref = self.quiet_e0
         self._set_baseline(b, "captured")
-        ratio = float(self.cfg["baseline"].get("recheck_ratio", 1.3))
-        if b.disturbed:                                    # (its own hint already asks to measure again)
+        if level is not None:                              # (it replaces today's level)
+            self._hint(f"Quieter than earlier: room level {b.e0:.2f}.", "green", 8.0)
+        elif b.disturbed:                                  # (its own hint already asks to measure again)
             self.log(f"baseline disturbed: d {b.d:.1f}, the quiet part's e0 {b.e0:.3g}")
-        elif ref is not None and b.e0 > ratio * ref:        # busier than this run's quietest measurement
-            self.log(f"baseline busy: e0 {b.e0:.3g} is {b.e0 / ref:.1f}x the quietest {ref:.3g}")
+        elif ref is not None and b.e0 > ratio * ref:        # busier than this run's quietest (a test recording: on
+            self.log(f"baseline busy: e0 {b.e0:.3g} is {b.e0 / ref:.1f}x the quietest {ref:.3g}")   # the day, kept)
             self._hint("Room was busy: click Measure room again.", "amber", 15.0, light="Measure the room again")
+
+    def _keep_level(self, b: chain.Baseline, level: chain.Baseline, ratio: float) -> None:
+        """Measure room found the room not clearly quieter than today's level (or someone moved): today's level
+        stays in use, and with it Uzayr's kept walks. The operator's line says why, in green: nothing to do. After a
+        restart (no level in use yet) today's level is taken from the file, as Use last measurement would."""
+        why = ("Someone moved" if b.disturbed else "Busier than earlier" if b.e0 > ratio * level.e0
+               else "About the same as earlier")
+        self.log(f"baseline kept: today's e0 {level.e0:.3g}; this one's e0 {b.e0:.3g}"
+                 + (f" (someone moved: d {b.d:.1f})" if b.disturbed else f" ({b.e0 / level.e0:.2f}x)"))
+        if self.chain.baseline is None:
+            self._set_baseline(level, "reused")
+        else:
+            self._back_from_measuring()
+        self._hint(f"{why}: kept the earlier room level {level.e0:.2f}.", "green", 8.0)
+
+    def _back_from_measuring(self) -> None:
+        """Measure room is done (or Use last measurement): back to where it was clicked."""
+        self.state = self.prev if self.prev not in (NEEDS_BASELINE, BUSY, NAME_ENTRY) else IDLE
+        self.state = self._resting() if self.state in (IDLE, READY) else self.state
 
     def _set_baseline(self, b: chain.Baseline, how: str) -> None:
         self.chain.baseline = b
@@ -696,12 +755,11 @@ class App:
             self._drop_uzayr()
             self.uz_reused = False
             self._event("uzayr_dropped", index=self.vidx, t_mono=time.monotonic(), why="room")
-        if self.baseline_path and how == "captured":
+        if self.baseline_path and how == "captured" and not self.record_dir:   # (a recording's is not the day's)
             with open(self.baseline_path, "w", encoding="utf-8") as f:
                 json.dump(b.to_json(), f)
         self.log(f"baseline {how} cols {b.n_cols}")
-        self.state = self.prev if self.prev not in (NEEDS_BASELINE, BUSY, NAME_ENTRY) else IDLE
-        self.state = self._resting() if self.state in (IDLE, READY) else self.state
+        self._back_from_measuring()
         low = self.quiet_e0                                # the run's quietest measurement before this one
         if not b.disturbed:                                # (one someone moved in never sets it)
             self.quiet_e0 = b.e0 if low is None else min(low, b.e0)
@@ -720,11 +778,11 @@ class App:
         try:
             with open(self.baseline_path, encoding="utf-8") as f:
                 b = chain.Baseline.from_json(json.load(f))
-        except (OSError, ValueError, KeyError):
-            return None
-        fresh = (time.time() - b.created) / 60.0 <= float(self.cfg["baseline"]["max_reuse_min"])
-        same = b.variant == self.chain.spec.variant and b.nfft == self.chain.spec.nfft
-        return b if fresh and same and len(b.floor) == len(self.chain.freqs) else None
+            same = b.variant == self.chain.spec.variant and b.nfft == self.chain.spec.nfft
+            ok = _today(b.created) and same and len(b.floor) == len(self.chain.freqs)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
+            return None                                    # (a damaged file: as if there were none)
+        return b if ok else None
 
     def new_visitor(self, name: str) -> None:
         self.wipe_visitor()
@@ -1455,7 +1513,7 @@ class App:
             main.update(label="Measure room")
             if self._reusable() is not None:               # in the slots Undo walk and New player use later
                 age = (time.time() - self.cached.created) / 60.0
-                b["reuse_baseline"] = {"look": "on", "label": f"Use last measurement ({age:.0f} min old)",
+                b["reuse_baseline"] = {"look": "on", "label": f"Use last measurement ({_age_text(age)})",
                                        "key": "enter"}
                 del b["discard"], b["new_visitor"]
         elif st == BUSY:
@@ -1744,7 +1802,7 @@ def _say_if_no_model(cfg: dict, app: App) -> None:
 
 
 def run_live(cfg: dict, port: Optional[str], identify: bool, reset: bool, record: Optional[str],
-             fullscreen: bool = True) -> int:
+             fullscreen: bool = True, new_room: bool = False) -> int:
     openday.use_code()                                     # first: a copy without ../Code stops here, before any
     openday.ensure_dirs()                                  # port check or window
     p = find_port(port, identify)
@@ -1754,7 +1812,8 @@ def run_live(cfg: dict, port: Optional[str], identify: bool, reset: bool, record
         os.makedirs(rec_dir, exist_ok=True)
         print(f"RECORDING raw CSI and events into {rec_dir}", flush=True)
     log = RunLog(os.path.join(openday.LOGS, f"openday_{time.strftime('%Y%m%d')}.log"))
-    app = App(cfg, state_dir=openday.STATE, log=log, fullscreen=fullscreen, record_dir=rec_dir)
+    app = App(cfg, state_dir=openday.STATE, log=log, fullscreen=fullscreen, record_dir=rec_dir,
+              new_room=new_room)                       # (--new-room: today's room level forgotten)
     _say_if_no_model(cfg, app)
     print(f"Receiver {p}. Click the window once so it has the keyboard.", flush=True)
     rc, states = _run(cfg, app, {"RX": p}, reset, None, rec_dir)

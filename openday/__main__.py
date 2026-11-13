@@ -17,6 +17,8 @@ def main(argv=None) -> int:
     lv.add_argument("--reset", action="store_true", help="reset the receiver at start-up (off by default)")
     lv.add_argument("--record", default=None, metavar="DIR", help="BENCH ONLY: write raw CSI and events.jsonl under DIR")
     lv.add_argument("--windowed", action="store_true", help="start in a window instead of full screen")
+    lv.add_argument("--new-room", action="store_true",
+                    help="the boards were moved: forget today's room level (then Measure room)")
     rp = sub.add_parser("replay", help="the full app fed by thesis recordings instead of the boards (needs ../Code)")
     rp.add_argument("--script", required=True)
     rp.add_argument("--speed", type=float, default=1.0)
@@ -79,7 +81,7 @@ def main(argv=None) -> int:
     if a.mode == "replay":
         return app.run_replay(cfg, a.script, speed=a.speed, headless=a.headless, fullscreen=a.fullscreen)
     return app.run_live(cfg, port=a.port, identify=a.identify, reset=a.reset, record=a.record,
-                        fullscreen=not a.windowed)
+                        fullscreen=not a.windowed, new_room=a.new_room)
 
 
 if __name__ == "__main__":

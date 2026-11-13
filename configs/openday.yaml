@@ -117,16 +117,28 @@ pools:
                                # Their age is on Uzayr's line between walks ("Uzayr's walks: 6 min old.")
 
 baseline:
-  live_s: 10.0
+  # The room level of the day: the first Measure room of the calendar day that nobody moved in is the one in use,
+  # kept in state/baseline_live.json, so Use last measurement (Enter) offers it all day, also after a restart. A
+  # later Measure room replaces it only when clearly quieter (quieter_ratio); anything else, or one someone moved in,
+  # keeps it (the operator's line says so; Uzayr's kept walks stay). live --new-room forgets it (the boards were
+  # moved). A test recording (--record) never reuses one, always uses its own measurement (the bench tools rebuild
+  # from it) and never writes the file.
+  live_s: 30.0                 # was 10: 10 s missed someone moving in 8 of 21 home cuts; every home test used 30 s
   bench_s: 30.0
-  max_reuse_min: 20            # a cached live baseline younger than this can be reused with Enter (not in --record)
   min_cols: 20                 # fewer columns than this and the baseline is refused
   delay_s: 5.0                 # Measure room counts down this long (time to step back) before measuring
-  recheck_ratio: 1.3           # a measurement this many times the run's quietest asks to measure again
+  quieter_ratio: 0.9           # a new measurement replaces today's level (and Uzayr's kept walks expire) only when
+                               # under this many times it: "Quieter than earlier". From this up it is kept, so
+                               # measuring an unchanged room again changes nothing
+  recheck_ratio: 1.3           # a measurement more than this many times today's level is "Busier than earlier" (from
+                               # quieter_ratio up to it: "About the same as earlier"); either way today's level is
+                               # kept. In a test recording (it uses every measurement) this many times the run's
+                               # quietest asks to measure again
   quiet_flag_d: 15.0           # someone moved while measuring: its loudest second this many times its quietest
-                               # quarter's level. The room is then measured on that quarter, and the operator asked
-                               # to measure again (chain.room_baseline; 30 s of a still room measured 3 to 12;
-                               # a 10 s live capture of a still room very rarely passes 15: measure again)
+                               # quarter's level. With a level kept today, that level stays; else the room is
+                               # measured on that quarter, and the operator asked to measure again
+                               # (chain.room_baseline; 30 s of a still room, the live and the recording's capture
+                               # alike, measured 3 to 12)
 
 health:
   busy_window_s: 1.0

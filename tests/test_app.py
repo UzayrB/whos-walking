@@ -18,11 +18,11 @@ from matplotlib.backend_bases import MouseEvent
 
 from openday import bench, chain, models, screen, walks
 from openday.app import (App, RunLog, AGAIN, BUSY, DECIDING, ENROL_UZAYR, ENROL_VISITOR, IDLE, NAME_ENTRY,
-                         NEEDS_BASELINE, READY, RESULT, TILE, WALKING, _times)
+                         NEEDS_BASELINE, READY, RESULT, TILE, WALKING, _age_text, _times)
 from openday.chain import Columns
 
-from helpers import (HOP, cols, _app, _type, _feed, _walk, _to_game, _to_game_rest, _events, _cards, _labels, _light,
-                     _click, _player, _learn, _game, _age, _now, _ridge_app, _bar_heights)
+from helpers import (DEC, HOP, cols, _app, _type, _feed, _walk, _to_game, _to_game_rest, _events, _cards, _labels,
+                     _light, _click, _player, _learn, _game, _age, _now, _ridge_app, _bar_heights)
 
 
 # ---- the main button: Start walk / They've stopped / Next walk, guarded against double presses -----------------------
@@ -689,14 +689,323 @@ def test_setup_reuses_the_cached_measurement_by_button(cfg, tmp_path):
 
 
 @pytest.mark.alternate_round
-def test_a_measurement_that_got_too_old_is_not_offered(cfg, tmp_path):
+def test_a_measurement_from_yesterday_is_not_offered(cfg, tmp_path):
+    """Use last measurement offers only today's room level (checked when drawn, so also after midnight)."""
     app = _app(cfg, tmp_path, baseline=False)
-    old = 60.0 * (float(cfg["baseline"]["max_reuse_min"]) + 1)   # fresh at start-up, too old by now
     app.cached = chain.Baseline(np.ones(len(app.chain.freqs)), 2.0, 100, app.chain.spec.variant,
-                              app.chain.spec.nfft, created=time.time() - old)
+                              app.chain.spec.nfft, created=_midnight() - 60.0)
     assert "reuse_baseline" not in app.view(time.monotonic())["buttons"]
     _type(app, ["enter"])
     assert app.chain.baseline is None and app.state == NEEDS_BASELINE
+
+
+# ---- the room level of the day: kept through the day and a restart; only a quieter measurement replaces it ----------
+
+def _midnight():
+    """time.time() of today's midnight (the laptop's clock)."""
+    return time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1))
+
+
+def _day_app(cfg, tmp_path, record=False, new_room=False):
+    """An app as run_live makes it (its room level kept in tmp_path/state/baseline_live.json), or a test recording,
+    with packets arriving and the room not measured yet in this run."""
+    app = App(cfg, state_dir=str(tmp_path / "state"), log=RunLog(None), headless=True,
+              record_dir=str(tmp_path) if record else None, new_room=new_room)
+    app.last_pkt_wall = 1e12                                       # packets keep arriving
+    app.chain.clock.blocks.append((0, 0.0))                        # host time = device time
+    app._decide = lambda f: DEC                                    # a fixed answer, as _app
+    return app
+
+
+def _measure_room(app, t, scale, seed, moved=False):
+    """Measure room (Ctrl+B) at host time t, the whole capture of a room this loud (moved: someone moved for 3 s of
+    it), finished. Returns the measurement (in use or not)."""
+    made = []
+    orig = chain.room_baseline
+    chain.room_baseline = lambda *a, **k: made.append(orig(*a, **k)) or made[-1]
+    try:
+        d = float(app.cfg["baseline"]["delay_s"])
+        secs = float(app.cfg["baseline"]["bench_s" if app.record_dir else "live_s"])
+        app.on_key_now("ctrl+b", t)
+        _capture_cols(app, t, t + d + secs + 0.5, scale, seed, (t + d + 10.0, t + d + 13.0, 50.0) if moved else None)
+        app._timers(time.monotonic())
+    finally:
+        chain.room_baseline = orig
+    assert app.state != BUSY and len(made) == 1
+    return made[0]
+
+
+def _saved_e0(tmp_path):
+    with open(tmp_path / "state" / "baseline_live.json", encoding="utf-8") as f:
+        return json.load(f)["e0"]
+
+
+def test_the_age_on_use_last_measurement():
+    assert [_age_text(m) for m in (0.2, 7.0, 59.4, 59.6, 119.0, 185.0, 600.0)] == \
+        ["0 min old", "7 min old", "59 min old", "1 h old", "1 h old", "3 h old", "10 h old"]
+
+
+@pytest.mark.alternate_round
+def test_use_last_measurement_after_a_restart_the_same_day_not_the_next(cfg, tmp_path):
+    """The room level is kept all day: after a restart Use last measurement offers it however old it is today
+    (it was only 20 minutes before), and takes it with one click; from yesterday it is not offered."""
+    a = _day_app(cfg, tmp_path)
+    b = _measure_room(a, 50.0, 1.0, 0)
+    assert a.chain.baseline is b and _saved_e0(tmp_path) == b.e0
+    a.close()
+    path = tmp_path / "state" / "baseline_live.json"
+    saved = json.loads(path.read_text())
+    saved["created"] = (_midnight() + time.time()) / 2             # earlier today, hours ago unless just after midnight
+    path.write_text(json.dumps(saved))
+    a = _day_app(cfg, tmp_path)                                    # the restart
+    assert a.state == NEEDS_BASELINE and a.cached is not None and a.cached.e0 == b.e0
+    btn = a.view(time.monotonic())["buttons"]["reuse_baseline"]
+    assert btn["look"] == "on" and btn["label"].startswith("Use last measurement (") and btn["label"].endswith(" old)")
+    _type(a, [btn["key"]])
+    assert a.state == IDLE and a.chain.baseline.e0 == b.e0
+    assert a.view(time.monotonic())["hint"][0] == "Using the last measurement."
+    a.close()
+    saved["created"] = _midnight() - 60.0                          # yesterday
+    path.write_text(json.dumps(saved))
+    a = _day_app(cfg, tmp_path)
+    assert a.cached is None and "reuse_baseline" not in a.view(time.monotonic())["buttons"]
+    _type(a, ["enter"])
+    assert a.chain.baseline is None and a.state == NEEDS_BASELINE
+
+
+KEPT = {"busier": (0.06, False, "Busier than earlier"), "about the same": (0.038, False, "About the same as earlier"),
+        "a little quieter": (0.0342, False, "About the same as earlier"), "someone moved": (0.02, True, "Someone moved")}
+
+
+@pytest.mark.shipped
+@pytest.mark.parametrize("how", list(KEPT))
+def test_a_measurement_no_quieter_keeps_todays_level_and_his_walks(cfg, tmp_path, how):
+    """Measure room in the game, the room busier than today's level (more than baseline.recheck_ratio), about the
+    same, a little quieter (0.95x: not under baseline.quieter_ratio), or someone moved (even with a quieter quiet
+    part): today's level stays in use and on file, the line says so in green and asks nothing (the light stays
+    green), and Uzayr's kept walks stay: the next player reuses them."""
+    app = _day_app(cfg, tmp_path)
+    level = _measure_room(app, 50.0, 0.036, 0)                     # set-up: room level about 1
+    assert app.chain.baseline is level and 0.8 < level.e0 < 1.2
+    _player(app, "Le")
+    t, _ = _learn(app, 100.0)
+    t = _game(app, t)
+    assert app.state == RESULT and app._uz_reusable()
+    scale, moved, why = KEPT[how]
+    b = _measure_room(app, t, scale, 1, moved)
+    ratio, quieter = float(cfg["baseline"]["recheck_ratio"]), float(cfg["baseline"]["quieter_ratio"])
+    assert b.disturbed == moved and (moved or (b.e0 > ratio * level.e0) == (how == "busier"))
+    assert moved or quieter * level.e0 <= b.e0
+    assert (how == "a little quieter") == (not moved and 0.93 < b.e0 / level.e0 < 0.97)
+    assert app.chain.baseline is level and _saved_e0(tmp_path) == level.e0
+    assert app.state == RESULT
+    assert _now(app)["hint"][0].startswith("Click Next walk")
+    assert app.view(time.monotonic())["hint"] == (f"{why}: kept the earlier room level {level.e0:.2f}.",
+                                                  screen.STATUS["green"])
+    assert _light(app) == ("green", "Ready") and app.hint_ev[3] is None
+    assert app._uz_reusable() and app._uz_note().startswith(" Uzayr's walks: ")
+    _player(app, "Si")
+    assert app.uz_reused
+    _, who = _learn(app, t + 20.0)
+    assert who == ["visitor"] * _n(cfg)
+
+
+@pytest.mark.shipped
+def test_a_busier_measurement_halfway_through_his_walks_keeps_them(cfg, tmp_path):
+    """Measure room after two of his walks, the room busier: today's level stays, so his two walks count and he
+    walks only the rest."""
+    app = _day_app(cfg, tmp_path)
+    level = _measure_room(app, 50.0, 0.036, 0)
+    _player(app, "Le")
+    t = 100.0
+    for _ in range(_n(cfg) + 2):                                   # the visitor's walks, then two of his
+        _walk(app, t)
+        t += 20.0
+    assert app.done["uzayr"] == 2 and app.state == ENROL_VISITOR
+    _measure_room(app, t, 0.06, 1)
+    assert app.chain.baseline is level and app.done["uzayr"] == 2 and app.state == ENROL_VISITOR
+    _, who = _learn(app, t + 20.0)
+    assert who == ["uzayr"] * (_nu(cfg) - 2)
+
+
+@pytest.mark.shipped
+@pytest.mark.parametrize("scale", [0.02, 0.0306])
+def test_a_quieter_measurement_replaces_todays_level(cfg, tmp_path, scale):
+    """Measure room in a clearly quieter room (about 0.56x, and 0.85x: under baseline.quieter_ratio): it is the
+    new level of the day (in use and on file), "Quieter than earlier: room level ..." in green, and Uzayr's kept
+    walks expire with the old level."""
+    app = _day_app(cfg, tmp_path)
+    level = _measure_room(app, 50.0, 0.036, 0)
+    _player(app, "Le")
+    t, _ = _learn(app, 100.0)
+    t = _game(app, t)
+    b = _measure_room(app, t, scale, 1)
+    assert b.e0 < float(cfg["baseline"]["quieter_ratio"]) * level.e0 and (scale < 0.03 or b.e0 > 0.8 * level.e0)
+    assert app.chain.baseline is b and _saved_e0(tmp_path) == b.e0
+    assert app.view(time.monotonic())["hint"] == (f"Quieter than earlier: room level {b.e0:.2f}.",
+                                                  screen.STATUS["green"])
+    assert app._uz_note() == " Uzayr walks next round."
+    _player(app, "Si")
+    assert not app.uz_reused
+    _, who = _learn(app, t + 20.0)
+    assert who == ["visitor"] * _n(cfg) + ["uzayr"] * _nu(cfg)
+
+
+@pytest.mark.alternate_round
+def test_after_a_restart_a_busier_measurement_takes_todays_level_from_file(cfg, tmp_path):
+    """After a restart, Measure room instead of Use last measurement: busier (or someone moved) gives today's level
+    from the file, as Use last measurement would; quieter is taken as the new level."""
+    a = _day_app(cfg, tmp_path)
+    level = _measure_room(a, 50.0, 1.0, 0)
+    a.close()
+    a = _day_app(cfg, tmp_path)
+    _measure_room(a, 50.0, 3.0, 1)
+    assert a.state == IDLE and a.chain.baseline.e0 == level.e0 and _saved_e0(tmp_path) == level.e0
+    assert a.view(time.monotonic())["hint"] == (f"Busier than earlier: kept the earlier room level {level.e0:.2f}.",
+                                                screen.STATUS["green"])
+    _measure_room(a, 200.0, 1.0, 2, moved=True)
+    assert a.chain.baseline.e0 == level.e0 and a.view(time.monotonic())["hint"][0].startswith("Someone moved: kept")
+    a.close()
+    a = _day_app(cfg, tmp_path)
+    b = _measure_room(a, 50.0, 0.5, 3)
+    assert a.chain.baseline is b and b.e0 < level.e0 and _saved_e0(tmp_path) == b.e0
+    assert a.view(time.monotonic())["hint"][0] == f"Quieter than earlier: room level {b.e0:.2f}."
+
+
+MOVED_DAY = "Someone moved: using the quiet part. Measure room again when everyone is still."
+
+
+@pytest.mark.alternate_round
+def test_with_no_clean_level_today_measure_room_is_as_before(cfg, tmp_path):
+    """No measurement nobody moved in yet today: someone moving uses the quiet part and asks to measure again (amber,
+    the light too), and is not offered after a restart; the next one is taken whatever it is, and a clean one
+    becomes today's level."""
+    a = _day_app(cfg, tmp_path)
+    b1 = _measure_room(a, 50.0, 1.0, 0, moved=True)
+    assert a.chain.baseline is b1 and b1.disturbed
+    assert a.view(time.monotonic())["hint"] == (MOVED_DAY, screen.STATUS["amber"])
+    assert _light(a) == ("amber", "Measure the room again")
+    a.close()
+    a = _day_app(cfg, tmp_path)
+    assert "reuse_baseline" not in a.view(time.monotonic())["buttons"]
+    b2 = _measure_room(a, 50.0, 2.0, 1, moved=True)
+    assert a.chain.baseline is b2 and a.view(time.monotonic())["hint"] == (MOVED_DAY, screen.STATUS["amber"])
+    b3 = _measure_room(a, 200.0, 3.0, 2)                          # clean, if busier than the quiet parts: taken
+    assert a.chain.baseline is b3 and b3.e0 > b2.e0 and _saved_e0(tmp_path) == b3.e0
+    assert a.view(time.monotonic())["hint"] == (f"Room level {b3.e0:.2f}.", screen.STATUS["green"])
+    _measure_room(a, 400.0, 3.5, 3)                                # now today has a level: kept
+    assert a.chain.baseline is b3
+
+
+@pytest.mark.alternate_round
+def test_a_recording_always_measures_and_uses_its_own(cfg, tmp_path):
+    """--record is as before: today's level on file is never offered, every measurement is used, and one busier
+    than the run's quietest asks to measure again (the bench tools rebuild every level from the recording)."""
+    a = _day_app(cfg, tmp_path / "day")
+    _measure_room(a, 50.0, 1.0, 0)
+    a.close()
+    os.makedirs(tmp_path / "rec" / "state")
+    os.replace(tmp_path / "day" / "state" / "baseline_live.json", tmp_path / "rec" / "state" / "baseline_live.json")
+    r = _day_app(cfg, tmp_path / "rec", record=True)
+    assert r.cached is None and "reuse_baseline" not in r.view(time.monotonic())["buttons"]
+    _type(r, ["enter"])
+    assert r.state == NEEDS_BASELINE
+    b1 = _measure_room(r, 50.0, 1.0, 1)
+    b2 = _measure_room(r, 200.0, 3.0, 2)
+    assert r.chain.baseline is b2 and b2.e0 > 1.3 * b1.e0
+    assert r.view(time.monotonic())["hint"] == ("Room was busy: click Measure room again.", screen.STATUS["amber"])
+    assert _light(r) == ("amber", "Measure the room again")
+    ev = [e for e in _events(tmp_path / "rec") if e["kind"] == "baseline_end"]
+    assert [e["e0"] for e in ev] == [b1.e0, b2.e0]
+
+
+@pytest.mark.alternate_round
+def test_a_recording_never_writes_todays_level(cfg, tmp_path):
+    """A recording's measurements (quieter or busier) leave today's level on file as it was, byte for byte; with no
+    file, a recording writes none."""
+    a = _day_app(cfg, tmp_path)
+    level = _measure_room(a, 50.0, 1.0, 0)
+    a.close()
+    path = tmp_path / "state" / "baseline_live.json"
+    before = path.read_bytes()
+    r = _day_app(cfg, tmp_path, record=True)
+    for t, scale in ((50.0, 0.5), (200.0, 3.0)):
+        b = _measure_room(r, t, scale, int(t))
+        assert r.chain.baseline is b                               # (used, as every recording's measurement)
+    r.close()
+    assert path.read_bytes() == before and _saved_e0(tmp_path) == level.e0
+    r = _day_app(cfg, tmp_path / "fresh", record=True)
+    _measure_room(r, 50.0, 1.0, 1)
+    assert not (tmp_path / "fresh" / "state" / "baseline_live.json").exists()
+
+
+@pytest.mark.alternate_round
+@pytest.mark.parametrize("text", ["[]", "null", '"x"', "{}", '{"created": null}', "nonsense", "created", "e0",
+                                  "floor", "floor list"])
+def test_a_damaged_room_level_file_is_ignored(cfg, tmp_path, text):
+    """state/baseline_live.json that is not a room measurement (not JSON, not an object, a missing or null field,
+    a time out of range, a floor of the wrong shape): the app starts as if there were none."""
+    n = int(cfg["dsp"]["nfft"]) // 2 + 1
+    good = {"floor": [1.0] * n, "e0": 0.7, "n_cols": 187, "variant": cfg["dsp"]["variant"],
+            "nfft": int(cfg["dsp"]["nfft"]), "created": time.time() - 60}
+    bad = {"created": dict(good, created=None), "e0": dict(good, e0=None), "floor": dict(good, floor=5),
+           "floor list": dict(good, floor=["a"] * n)}
+    if text in bad:
+        text = json.dumps(bad[text])
+    elif text == "{}":
+        text = json.dumps(dict(good, created=1e300))
+    os.makedirs(tmp_path / "state")
+    (tmp_path / "state" / "baseline_live.json").write_text(text)
+    a = _day_app(cfg, tmp_path)
+    assert a.cached is None and a.state == NEEDS_BASELINE
+    assert "reuse_baseline" not in a.view(time.monotonic())["buttons"]
+    b = _measure_room(a, 50.0, 1.0, 0)
+    assert a.chain.baseline is b and _saved_e0(tmp_path) == b.e0
+
+
+@pytest.mark.alternate_round
+def test_a_dropped_measurement_says_todays_level_stays(cfg, tmp_path):
+    """The signal goes while measuring: with today's level in use the line says it is kept (no need to measure
+    again); at set-up, and in a recording, it asks to measure again."""
+    for record in (False, True):
+        a = _day_app(cfg, tmp_path / str(record), record=record)
+        level = _measure_room(a, 50.0, 1.0, 0)
+        _type(a, ["ctrl+b"], 200.0)
+        a._abort("Signal lost")
+        assert a.chain.baseline is level and a.state == IDLE
+        want = "Signal lost: click Measure room again." if record else \
+            f"Signal lost: kept the earlier room level {level.e0:.2f}."
+        assert a.view(time.monotonic())["hint"] == (want, screen.STATUS["amber"])
+        a.close()
+    a = _day_app(cfg, tmp_path / "setup")
+    _type(a, ["ctrl+b"], 50.0)
+    a._abort("Receiver silent")
+    assert a.state == NEEDS_BASELINE
+    assert a.view(time.monotonic())["hint"] == ("Receiver silent: click Measure room again.", screen.STATUS["amber"])
+
+
+@pytest.mark.alternate_round
+def test_new_room_forgets_todays_level(cfg, tmp_path, monkeypatch):
+    """The boards were moved: live --new-room (run_openday.command --new-room) deletes today's level, so nothing is
+    offered and the next measurement is taken whatever it is; the next plain restart offers that one."""
+    a = _day_app(cfg, tmp_path)
+    level = _measure_room(a, 50.0, 1.0, 0)
+    a.close()
+    a = _day_app(cfg, tmp_path, new_room=True)
+    assert not (tmp_path / "state" / "baseline_live.json").exists()
+    assert a.cached is None and "reuse_baseline" not in a.view(time.monotonic())["buttons"]
+    b = _measure_room(a, 50.0, 3.0, 1)
+    assert a.chain.baseline is b and b.e0 > 1.3 * level.e0
+    assert a.view(time.monotonic())["hint"] == (f"Room level {b.e0:.2f}.", screen.STATUS["green"])
+    a.close()
+    a = _day_app(cfg, tmp_path)
+    assert a.cached is not None and a.cached.e0 == b.e0
+    import openday.__main__ as cli                                 # the flag reaches run_live
+    from openday import app as app_module
+    got = []
+    monkeypatch.setattr(app_module, "run_live", lambda cfg, **kw: got.append(kw["new_room"]) or 0)
+    assert cli.main(["live", "--new-room"]) == 0 and cli.main(["live"]) == 0
+    assert got == [True, False]
 
 
 @pytest.mark.alternate_round

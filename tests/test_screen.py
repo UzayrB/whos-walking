@@ -638,6 +638,37 @@ def test_the_lines_after_measure_room_fit(cfg, tmp_path, record, size):
     assert _drawn_hint(app, vm, size) == [first, second] and app.screen.hint.get_fontsize() == pytest.approx(full)
 
 
+@pytest.mark.shipped
+@pytest.mark.parametrize("size", [(14.70, 9.24), (16, 9)])
+def test_the_lines_when_todays_level_is_kept_fit(cfg, tmp_path, size):
+    """Measure room not clearly quieter than today's level (on the day): "Busier than earlier: kept the earlier room
+    level 26.31." and its two siblings, "Quieter than earlier: room level 26.31." and a measurement dropped with
+    today's level in use, at full size in one line or split after the ":", clear of the buttons, on the MacBook's
+    full screen and a 16:9 screen."""
+    app = _app(cfg, tmp_path)
+    n, v, nfft = len(app.chain.freqs), app.chain.spec.variant, app.chain.spec.nfft
+    full = app.screen.hint._base_size * size[1] / screen.BASE_H
+    level = chain.Baseline(np.ones(n), 26.31, 100, v, nfft)
+    app.chain.baseline = level
+    for b, why in ((chain.Baseline(np.ones(n), 99.99, 100, v, nfft), "Busier than earlier"),
+                   (chain.Baseline(np.ones(n), 27.0, 100, v, nfft), "About the same as earlier"),
+                   (chain.Baseline(np.ones(n), 0.76, 100, v, nfft, disturbed=True, d=35.8), "Someone moved")):
+        app.prev = app.state
+        app._keep_level(b, level, float(cfg["baseline"]["recheck_ratio"]))
+        vm = app.view(time.monotonic())
+        assert vm["hint"][0] == f"{why}: kept the earlier room level 26.31."
+        assert _drawn_hint(app, vm, size) in ([vm["hint"][0]], [f"{why}:", "kept the earlier room level 26.31."])
+        assert app.screen.hint.get_fontsize() == pytest.approx(full) and app.chain.baseline is level
+    for text in ("Quieter than earlier: room level 26.31.", "Receiver restarted: kept the earlier room level 26.31.",
+                 "Receiver silent: kept the earlier room level 26.31."):   # (a replaced level; a dropped measurement)
+        app._hint(text, "green")
+        vm = app.view(time.monotonic())
+        assert vm["hint"][0] == text
+        first, rest = text.split(": ", 1)
+        assert _drawn_hint(app, vm, size) in ([text], [f"{first}:", rest])
+        assert app.screen.hint.get_fontsize() == pytest.approx(full)
+
+
 # ---- every screen at every size: nothing overlaps (tests/overlap.py measures the letters themselves) -----------------
 
 # Every screen of `python -m openday screens` and the hard cases (long names, the longest "Told apart by", extreme
