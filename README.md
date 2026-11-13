@@ -138,8 +138,6 @@ walk, and one more for a close call).
 
 ### Your routine at the stand
 
-[STAND_CARD.md](STAND_CARD.md) has this in short, and a tally sheet to print.
-
 - **Before visitors arrive.** Click **Details**: about 150 pkt/s on the bottom line (the light goes red under 100).
   Click **Details** again. Then **Measure room**, while the hall is still empty. The app keeps that room level all
   day, through restarts too.
@@ -164,11 +162,6 @@ walk, and one more for a close call).
 - **Click They've stopped as the walker lands on the X** whenever people are moving nearby: a busy room rarely
   makes the app miss a walk, but it can make walks end late, or see a walk that wasn't there.
 - **Say "go" and click as you say it.** The walker leaves on "go". The same for every walk, yours too.
-- **Keep the tally sheet:** right or wrong for every answer. The screen keeps no score.
-- **Setup day, if the room is free:** start `./run_solo_test.command` (it records), then **Details** and
-  **Measure room** as in section 7, steps 1 and 2. Then, on "Who's walking?" with no player: 20 walks, with a
-  one-minute break after the first 10. Click **Start walk** for each, and **It was Uzayr** on each answer. Then
-  **Quit**, **Yes, quit**. The other steps of section 7 can wait.
 
 ### What the card says
 
@@ -532,7 +525,6 @@ The other files are tools you need only away from the show: `evaluate.py` (how g
 
 - `run_openday.command`: double-click to start the app on the boards, full screen. `run_solo_test.command`: the
   same, recording a home test into `bench/solo_<date>/`.
-- `STAND_CARD.md`: your routine at the stand in short, and a tally sheet, to print or read on your phone.
 - `openday/`: the code, in reading order:
   - `__init__.py`: where things live, the settings loader and the participant codes.
   - `chain.py`: Wi-Fi packets → the speed picture and the 3D bars.
