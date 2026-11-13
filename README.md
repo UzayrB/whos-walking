@@ -313,7 +313,7 @@ per walk is final: both buttons go dim, the one you clicked gets a tick
    boards. Each one should say "Missed that one" after about 5 s. (After two in a row the light says "Missed
    twice"; that's expected here.) If a speed shows instead of "Missed that one", click **Undo walk** and write
    down which click it was.
-4. **Timed walks:** 10 walks: 2 slow, 6 at your normal pace, 2 fast. For each: on the back mark click **Start
+4. **Timed walks:** 10 walks. For each: on the back mark click **Start
    walk** and go; walk to the X and stand still until your speed shows; click **It was Uzayr** (optional, but it
    lets the check compare that walk with your stopwatch); walk back. Someone with a phone stopwatch starts it as
    you leave the back mark and stops it as you stand still on the X. Write the times down in order.

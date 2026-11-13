@@ -50,9 +50,7 @@ apart in a real room. Type the commands in the VS Code terminal, in the OpenDay 
     click It was Uzayr or It was <friend> for who really walked. One click is final (both buttons go dim);
     a wrong click: Undo walk removes that walk. "Walk once more!" (too close to call): the same person walks once
     more (no coin flip; it is not one of the 20), and It was ... after that answer labels both walks.
- 7. Optional: 4 walks each at a matched pace (both walk to a phone metronome at the same beat). Click It was ...
-    for each.
- 8. Quit, then score it:
+ 7. Quit, then score it:
       PYTHONDONTWRITEBYTECODE=1 /opt/anaconda3/bin/python3 -m openday eval --bench bench/{day}
     The report scores the shipped model (with 5 + 5, 3 + 3, the app's round 2 + 5 (the friend's 2, Uzayr's 5)
     and the older 2 + 2) beside the nearest-centre rule (m0) and speed alone, and the second looks.
@@ -369,7 +367,7 @@ def second_looks(cfg: dict, ws: list[dict], model=None) -> list[dict]:
 
 def split_session(post: list[dict], n_en: int, n_te: int) -> tuple[list, list, list, list]:
     """The session after the break, in order, as (eu, ev_, tests, matched): the first n_en U and n_en V walks (the
-    alternating pool), the next n_te walks (the test), the rest (matched pace). A second look (classifier
+    alternating pool), the next n_te walks (the test), the rest (extra walks). A second look (classifier
     .second_look: a walk with "second_of", the same walker once more after a close call) is not a walk of its own
     here: it never takes a pool or test place (second_looks and as_shown use it)."""
     main = [w for w in post if w.get("second_of") is None]
@@ -476,10 +474,10 @@ def run_bench(cfg: dict, d: str, log=print) -> str:
                    if gap_min < float(e["bench_break_min"]) else "") + ". " if cut else
                 "No run before the visitor's, so no stored pool. ")
              + f"Enrolment (after the break): first {n_en} U and first {n_en} V walks; tests: the {len(tests)} walks "
-             f"after them; matched-pace walks after that: {len(matched)}. Only labelled walks count (learning walks by "
+             f"after them; extra walks after that: {len(matched)}. Only labelled walks count (learning walks by "
              "their turn, game walks by an It was ... click)."
              + (f" Second looks: a close call's walk once more takes no place of its own; {n_both} test walks"
-                + (f" and {n_both_m} matched-pace walks" if n_both_m else "")
+                + (f" and {n_both_m} extra walks" if n_both_m else "")
                 + " were close calls walked once more, each scored on both walks averaged, as the round showed it."
                 if n_both or n_both_m else ""))
     L.append("")
@@ -545,10 +543,10 @@ def run_bench(cfg: dict, d: str, log=print) -> str:
         pooled = np.sqrt((sp["u"].var(ddof=1) + sp["v"].var(ddof=1)) / 2)
         L.append(f"- separation: {abs(sp['u'].mean() - sp['v'].mean()) / max(pooled, 1e-9):.2f} pooled SDs; "
                  f"speed alone gets {b['speed_only']} of {b['n']} with the alternating pool, four features "
-                 f"{b['forced']} (forced). If those match, the demo is reading pace.")
+                 f"{b['forced']} (forced). If those match, speed alone is doing the work.")
     if matched:
         m = _score(cfg, {"uzayr": eu, "visitor": ev_}, matched, names)
-        L.append(f"- matched pace walks: four features {m['forced']} of {m['n']}, speed alone {m['speed_only']}.")
+        L.append(f"- extra walks after the test: four features {m['forced']} of {m['n']}, speed alone {m['speed_only']}.")
     L.append("")
     tau, curve = E.tau_curve(b["margins"], b["correct"], float(cfg["eval"]["not_sure_max"]))
     L.append(f"(e) Re-fitted tau for this room (alternating pool's test walks, at most "
