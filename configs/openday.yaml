@@ -1,10 +1,10 @@
 # OpenDay "Who's walking?" demo: every constant lives here.
-# Lines marked "fitted by eval" are rewritten by `python -m openday eval` ("fitted by eval-pair": by eval-pair --write).
+# Lines marked "fitted" were fitted on the six thesis participants' recordings (28 Oct; the model's lines 12-13 Nov).
 
 radio:
   fs_hz: 150.0                 # uniform resampling grid (TX rate)
   wavelength_m: 0.12177        # channel 11, 2462 MHz
-  bistatic_factor: 0.937       # fitted by eval (about 1 for TX and RX side by side)
+  bistatic_factor: 0.937       # fitted (about 1 for TX and RX side by side)
   # speed v = f * wavelength / (2 * bistatic_factor); at F = 1 that is f * 0.0609 m/s per Hz
 
 subcarriers:
@@ -29,14 +29,14 @@ dsp:
   hampel_mad_scale: 1.4826
   filter_low_hz: 3.0           # high-pass corner (Butterworth, causal, per subcarrier)
   filter_order: 4
-  variant: A                   # fitted by eval: A = PCA (drop PC1, keep PCs 2-4), B = sum over subcarriers
+  variant: A                   # fitted: A = PCA (drop PC1, keep PCs 2-4), B = sum over subcarriers
   pca_window_s: 2.0
   pca_refit_s: 0.5
   pca_keep: [2, 3, 4]
   nperseg: 32                  # 0.21 s
   noverlap: 24                 # hop 8 samples = 53 ms, 18.75 columns/s
   window: hann
-  nfft: 128                    # fitted by eval (64 or 128)
+  nfft: 128                    # fitted (64 or 128)
   band_hz: [3.0, 70.0]         # contours and energy use this band
   floor_scale: 1.0             # above-floor power = clip(power - floor_scale * floor, 0)
   active_k: 6.0                # a column is active when energy > active_k * baseline median energy
@@ -76,10 +76,9 @@ gait:                          # the thesis's single-link gait features (openday
   min_window_s: 1.5            # shorter: the gait features are missing (NaN) and the model falls back on the rest
 
 classifier:
-  kind: m1                     # fitted by eval-pair: m0 (nearest centroid, readouts), m1 (learned whitening), m2 (pairwise)
-  model_path: state/model/model.json   # m1 / m2: the trained model, fitted on the six thesis people only
-                                       # (eval-pair --write would overwrite it with its own recipe)
-  model_tau: 0.1094            # m1 / m2: a margin below this is a close call: the answer still names the nearer
+  kind: m1                     # m1: the trained model (model_path); m0: the nearest-centre rule (no model needed)
+  model_path: state/model/model.json   # m1: the trained model, fitted on the six thesis people only (laptop only)
+  model_tau: 0.1094            # fitted, m1: a margin below this is a close call: the answer still names the nearer
                                # person (with second_look: after one more walk), and the log counts it; about 15 % of
                                # live test decisions fall below it
   second_look: true            # a GAME walk below the close-call line (model_tau; m0: tau) names nobody yet: the card
@@ -93,9 +92,9 @@ classifier:
                                # out, the installed model: about 16 % of game walks, +2.5 points (89.5 -> 92 %)
                                # false = one walk per answer, as before
   use: [speed, steps, swing, bounce]   # m0: features the decision uses (the tiles always show all four)
-  tau: 0.08                    # fitted by eval: m0 only (no trained model): a margin below this is a close call
+  tau: 0.08                    # fitted, m0 only (no trained model): a margin below this is a close call
                                # (logged; the answer still names the nearer person)
-  prior_sd:                    # fitted by eval: floor on each feature's spread
+  prior_sd:                    # fitted, m0 only: floor on each feature's spread
     speed: 0.0609
     steps: 20.3
     swing: 0.177
@@ -217,15 +216,8 @@ replay:
   xfade_s: 0.5                 # joins between recordings are cross-faded in amplitude over this long, which
                                # reduces (does not remove) the false motion a join makes (replay only)
 
-eval:
-  lane_m: 5.0                  # ground-truth pace = lane_m / (last anchor - first anchor)
-  end_after_last_s: 0.0        # an offline walk window closes this long after the last anchor (the stop line)
-  draws: 50
-  seed: 20261118
-  warmup_s: 3.0                # chain warm-up before the walk segment's own pre_s (same recording)
-  not_sure_max: 0.15
-  enrol_sizes: [1, 2, 3, 5]
-  enrol_n: 3
+eval:                          # eval --bench (the home tests) and the replays' ground truth
+  lane_m: 5.0                  # a thesis walk's true pace = lane_m / (last anchor - first anchor)
   bench_pass_bar: 18
   bench_enrol: 5               # per person, from the alternating enrolment
   bench_tests: 20

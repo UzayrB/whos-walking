@@ -23,7 +23,7 @@ from typing import Callable, Optional
 import numpy as np
 
 import openday
-from openday import chain, evaluate as E, models as MD, walks
+from openday import chain, models as MD, walks
 
 # --- 1. The two-person bench session protocol (bench-checklist) ---
 
@@ -52,8 +52,8 @@ apart in a real room. Type the commands in the VS Code terminal, in the OpenDay 
     more (no coin flip; it is not one of the 20), and It was ... after that answer labels both walks.
  7. Quit, then score it:
       PYTHONDONTWRITEBYTECODE=1 /opt/anaconda3/bin/python3 -m openday eval --bench bench/{day}
-    The report scores the shipped model (with 5 + 5, 3 + 3, the app's round 2 + 5 (the friend's 2, Uzayr's 5)
-    and the older 2 + 2) beside the nearest-centre rule (m0) and speed alone, and the second looks.
+    The report scores the shipped model (with 5 + 5, the app's round 2 + 5 (the friend's 2, Uzayr's 5) and the
+    older 2 + 2) beside the nearest-centre rule (m0) and speed alone, and the second looks.
 
 Someone else walked through? Cancel walk during the walk, Undo walk after it.
 Pass bar: the alternating pool (step 5) gets at least 18 of the 20 test walks right.
@@ -396,32 +396,28 @@ def as_shown(cfg: dict, walks_: list[dict], allw: list[dict]) -> tuple[list[dict
     return out, n
 
 
-def _score(cfg: dict, pools: dict, tests: list, use, tau: Optional[float] = None, model=None) -> dict:
-    """With `model` (models.Model) the decisions are that model's, on the full feature dicts; else m0's."""
+def _score(cfg: dict, pools: dict, tests: list, model=None) -> dict:
+    """With `model` (models.Model) the decisions are that model's, on the full feature dicts; else m0's (on the four
+    readouts)."""
     names = list(cfg["features"]["names"])
-    idx = [names.index(n) for n in use]
-    P = {k: np.array([w["x"][idx] for w in v]) for k, v in pools.items()}
+    P = {k: np.array([w["x"] for w in v]) for k, v in pools.items()}
     right = forced = speed = 0
-    margins, correct = [], []
     for w in tests:
         if model is not None:
             d = MD.decide(model, w["f"], {k: [x["f"] for x in v] for k, v in pools.items()})
         else:
-            d = MD.decide_m0(w["x"][idx], P, use, cfg, tau=tau)
+            d = MD.decide_m0(w["x"], P, names, cfg)
         truth = "uzayr" if w["label"] == "u" else "visitor"
         right += d.label == truth and not d.not_sure
         forced += d.label == truth
         speed += d.speed_only is not None and d.speed_only.label == truth
-        margins.append(d.margin)
-        correct.append(d.label == truth)
-    return {"right": right, "forced": forced, "speed_only": speed, "n": len(tests),
-            "margins": np.array(margins), "correct": np.array(correct, bool)}
+    return {"right": right, "forced": forced, "speed_only": speed, "n": len(tests)}
 
 
 def run_bench(cfg: dict, d: str, log=print) -> str:
-    """Score a two-person bench session (bench-checklist): stale and alternating pools, enrolment sizes, speed
-    overlap, a re-fitted tau. One line at the top says whether the alternating pool reached the pass bar. The walks
-    are recomputed with the runs' own room measurements (bench_detect)."""
+    """Score a two-person bench session (bench-checklist): the stale and alternating pools, the app's round with the
+    shipped model, the speed overlap and the second looks. One line at the top says whether the alternating pool
+    reached the pass bar. The walks are recomputed with the runs' own room measurements (bench_detect)."""
     openday.ensure_dirs()
     runs = bench_runs(d)
     if not runs:
@@ -459,7 +455,7 @@ def run_bench(cfg: dict, d: str, log=print) -> str:
     L = []
     if not (eu and ev_ and tests):
         raise SystemExit("Not enough labelled walks after the break for the alternating pool and the test walks")
-    b = _score(cfg, {"uzayr": eu, "visitor": ev_}, tests, names)
+    b = _score(cfg, {"uzayr": eu, "visitor": ev_}, tests)
     verdict = "PASS" if b["right"] >= bar and b["n"] >= n_te else "FAIL"
     L.append(f"**{verdict}: alternating pool (b) got {b['right']} of {b['n']} test walks right "
              f"(bar {bar} of {n_te}; not sure counts as a miss).**")
@@ -484,7 +480,7 @@ def run_bench(cfg: dict, d: str, log=print) -> str:
     L.append("| pool | right (with tau) | forced | speed only | of |")
     L.append("|---|---|---|---|---|")
     if stale:
-        a = _score(cfg, {"uzayr": stale, "visitor": ev_}, tests, names)
+        a = _score(cfg, {"uzayr": stale, "visitor": ev_}, tests)
         L.append(f"| (a) stale: Uzayr's last 5 before the break + friend's 5 | {a['right']} | {a['forced']} | "
                  f"{a['speed_only']} | {a['n']} |")
     else:
@@ -492,13 +488,10 @@ def run_bench(cfg: dict, d: str, log=print) -> str:
     L.append(f"| (b) alternating 5 + 5 | {b['right']} | {b['forced']} | {b['speed_only']} | {b['n']} |")
     model = MD.load_model(cfg, log=lambda _msg: None)        # (no log line: the report names the model)
     if model is not None:
-        bm = _score(cfg, {"uzayr": eu, "visitor": ev_}, tests, names, model=model)
-        b3 = _score(cfg, {"uzayr": eu[:3], "visitor": ev_[:3]}, tests, names, model=model)
-        b2 = _score(cfg, {"uzayr": eu[:2], "visitor": ev_[:2]}, tests, names, model=model)
+        bm = _score(cfg, {"uzayr": eu, "visitor": ev_}, tests, model=model)
+        b2 = _score(cfg, {"uzayr": eu[:2], "visitor": ev_[:2]}, tests, model=model)
         L.append(f"| (b) alternating 5 + 5, shipped model {model.kind} | {bm['right']} | {bm['forced']} | "
                  f"{bm['speed_only']} | {bm['n']} |")
-        L.append(f"| (b) 3 + 3 (the older C3 round), shipped model {model.kind} | {b3['right']} | "
-                 f"{b3['forced']} | {b3['speed_only']} | {b3['n']} |")
         nv = int(cfg["pools"]["n_enrol"])                  # the app's round: the visitor's n_enrol, Uzayr's own
         nu = int(cfg["pools"].get("n_enrol_uzayr", nv))
         if nu == nv == 2:                                  # (Uzayr walks as many as the visitor: as before)
@@ -506,34 +499,19 @@ def run_bench(cfg: dict, d: str, log=print) -> str:
                      f"{b2['forced']} | {b2['speed_only']} | {b2['n']} |")
         else:
             if len(ev_) >= nv and len(eu) >= nu:           # (enough of his walks in the pool)
-                ba = _score(cfg, {"uzayr": eu[:nu], "visitor": ev_[:nv]}, tests, names, model=model)
+                ba = _score(cfg, {"uzayr": eu[:nu], "visitor": ev_[:nv]}, tests, model=model)
                 L.append(f"| (b) {nv} + {nu} (the app's round: the friend's {nv}, Uzayr's {nu}), shipped model "
                          f"{model.kind} | {ba['right']} | {ba['forced']} | {ba['speed_only']} | {ba['n']} |")
             L.append(f"| (b) 2 + 2 (the older round), shipped model {model.kind} | {b2['right']} | "
                      f"{b2['forced']} | {b2['speed_only']} | {b2['n']} |")
         if stale:
-            am = _score(cfg, {"uzayr": stale, "visitor": ev_}, tests, names, model=model)
+            am = _score(cfg, {"uzayr": stale, "visitor": ev_}, tests, model=model)
             L.append(f"| (a) stale, shipped model {model.kind} | {am['right']} | {am['forced']} | {am['speed_only']} | "
                      f"{am['n']} |")
     L.append("")
-    L.append("(c) Enrolment size (first n of each from the alternating pool):")
-    L.append("")
-    L.append("| walks each | right (with tau) | forced | speed only |")
-    L.append("|---|---|---|---|")
-    for n in range(1, n_en + 1):
-        if len(eu) >= n and len(ev_) >= n:
-            c = _score(cfg, {"uzayr": eu[:n], "visitor": ev_[:n]}, tests, names)
-            L.append(f"| {n} | {c['right']} / {c['n']} | {c['forced']} | {c['speed_only']} |")
-    L.append("")
-    L.append("Each feature left out once (alternating pool, forced):")
-    L.append("")
-    for n in names:
-        c = _score(cfg, {"uzayr": eu, "visitor": ev_}, tests, [m for m in names if m != n])
-        L.append(f"- without {n}: {c['forced']} / {c['n']}")
-    L.append("")
     allw = [w for _, ws in per_run for w in ws]
     sp = {k: np.array([w["f"]["speed"] for w in allw if w["label"] == k]) for k in ("u", "v")}
-    L.append("(d) Do the two walkers' speeds overlap?")
+    L.append("(c) Do the two walkers' speeds overlap?")
     L.append("")
     for k, who in (("u", "Uzayr"), ("v", "friend")):
         if len(sp[k]):
@@ -545,13 +523,8 @@ def run_bench(cfg: dict, d: str, log=print) -> str:
                  f"speed alone gets {b['speed_only']} of {b['n']} with the alternating pool, four features "
                  f"{b['forced']} (forced). If those match, speed alone is doing the work.")
     if matched:
-        m = _score(cfg, {"uzayr": eu, "visitor": ev_}, matched, names)
+        m = _score(cfg, {"uzayr": eu, "visitor": ev_}, matched)
         L.append(f"- extra walks after the test: four features {m['forced']} of {m['n']}, speed alone {m['speed_only']}.")
-    L.append("")
-    tau, curve = E.tau_curve(b["margins"], b["correct"], float(cfg["eval"]["not_sure_max"]))
-    L.append(f"(e) Re-fitted tau for this room (alternating pool's test walks, at most "
-             f"{100 * float(cfg['eval']['not_sure_max']):.0f} % not sure): **{tau:.3f}** (config now "
-             f"{cfg['classifier']['tau']}). To use it, set classifier.tau in configs/openday.yaml.")
     L.append("")
     diffs = [abs(w["f"][n] - w["live_f"][n]) for w in allw if w.get("live_f") for n in names
              if np.isfinite(w["f"][n]) and np.isfinite(w["live_f"].get(n, np.nan))]

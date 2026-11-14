@@ -151,7 +151,7 @@ def test_operator_stop(cfg):
 
 def test_operator_stop_after_its_columns(cfg):
     """A stop whose column is already in ends the walk on that column, and the columns after it are dropped: the
-    same walk the offline evaluation gets by applying the stop first."""
+    same walk the bench tools get by applying the stop first."""
     e = [100.0] * 30 + [300.0] * 30
     w = WalkWindow(cfg, 0.0, 10.0, HOP)
     w.add(cols(e))                                                 # 3.2 s in already

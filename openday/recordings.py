@@ -2,8 +2,8 @@
 into one continuous RX2 stream, the replay playlists, and the stand-in serial port that feeds the stream in.
 
 This file, in order:
-  1. The thesis recordings, by participant code: stem (with eval-pair's manifest in state/model, laptop only: the
-     only two places a code becomes a name), load_rx2, load_gt, passes, gt_speed, segment.
+  1. The thesis recordings, by participant code: stem (with the laptop-only model manifest in state/model, the
+     only places a code becomes a name), load_rx2, load_gt, passes, gt_speed, segment.
   2. Stitching one stream from many pieces: Stitcher, IdleSource (empty-room frames for the gaps), walk_piece.
   3. Playlists (scripts/*.yaml): Plan and build_plan.
   4. The stand-in serial port: Replay plays the stream to the thesis recorder and types the operator's keys.
@@ -35,7 +35,7 @@ import openday
 
 
 def stem(code: str, day: int, block: str) -> str:
-    """A recording's file name without its ending. stem and eval-pair's manifest (state/model, laptop only) are the
+    """A recording's file name without its ending. stem and the model manifest (state/model, laptop only) are the
     only places a participant code becomes the first name the thesis filed the recording under
     (openday.recording_name, from the laptop-only configs/people.local.yaml)."""
     return f"participant_{openday.recording_name(code)}_idpath_d{int(day)}_{block}"
@@ -90,14 +90,13 @@ class Stitcher:
     Two recordings never match where they meet: each subcarrier's static level jumps, and the high-pass turns
     that step into a burst the chain reads as motion. So the first `xfade_s` of every piece after the first is
     cross-faded in amplitude (raised cosine) from the previous piece's last frames, keeping the new piece's
-    phase (the chain uses amplitude only). This reduces the burst; it does not remove it, which is why the
-    offline evaluation streams each pass from its own recording instead.
+    phase (the chain uses amplitude only). This reduces the burst; it does not remove it.
     """
 
-    def __init__(self, cfg: dict, xfade: bool = True) -> None:
+    def __init__(self, cfg: dict) -> None:
         self.mod = int(cfg["clock"]["modulus_us"])
         self.dt_us = int(round(1e6 / float(cfg["radio"]["fs_hz"])))
-        self.n_fade = int(round(float(cfg["replay"]["xfade_s"]) * float(cfg["radio"]["fs_hz"]))) if xfade else 0
+        self.n_fade = int(round(float(cfg["replay"]["xfade_s"]) * float(cfg["radio"]["fs_hz"])))
         self.lt_next, self.tm_base = 1_000_000, 1000.0     # the stream starts at device 1 s, host 1000 s
         self.parts: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
 

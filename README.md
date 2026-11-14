@@ -1,25 +1,24 @@
 # Who's walking? How to run it
 
-Uzayr's EEE4022S final-year project demo for UCT Open Day. Two ESP32 boards and Wi-Fi channel state information
-(no camera) tell a visitor's walk from Uzayr's, and show the walking speed. This repo holds the app only: running it
-live needs the boards and the private thesis code next to it in `../Code`. The trained model stays on the laptop;
-without it the app falls back to a simpler rule (m0). Without the boards and `../Code` you can still run the tests
-and `screens` ([Other commands](#other-commands-run-from-this-folder)). How it works: [What it is](#what-it-is).
+Uzayr's EEE4022S final-year project demo for UCT Open Day (18 November 2026). Two ESP32 boards and Wi-Fi channel
+state information (no camera) tell a visitor's walk from Uzayr's, and show the walking speed. How it works: [What it
+is](#what-it-is).
 
-The guide for Open Day (18 November 2026) and for the tests at home. You start the app with one command, and
-after that everything is done with the wireless mouse. The big button at the bottom right never moves, so leave
-the pointer on it and click from the back mark. **The bright button is always the next step.**
+This is the guide for Open Day and for the tests at home. You start the app with one command, and after that
+everything is done with the wireless mouse. The big button at the bottom right never moves, so leave the pointer on
+it and click from the back mark. **The bright button is always the next step.**
 
 The big card at the bottom of the screen is for the visitors. Your instructions are the line to the left of the
 buttons, and the light at the top warns you when something needs you (section 5).
 
 ![A round, in order](reports/screens/flow.png)
 
-**What this folder needs.** This is the Open Day app only. It runs on Uzayr's MacBook with Anaconda's Python
-(`/opt/anaconda3`, with numpy, scipy, matplotlib, pyyaml, pyserial and pytest). It needs the private
-thesis code in `../Code` to run live or replay; the trained model, the recordings and the list that joins
-participant codes to names stay on the laptop (see Files). Without the model the app uses the nearest-centre rule
-(m0).
+**What this folder needs.** This repo holds the app only. It runs on Uzayr's MacBook with Anaconda's Python
+(`/opt/anaconda3`, with numpy, scipy, matplotlib, pyyaml, pyserial and pytest). Running it live or on a replay
+needs the private thesis code next to it in `../Code`. The trained model, the recordings and the list that joins
+participant codes to names stay on the laptop ([Files](#files)); without the model the app uses a simpler rule,
+the nearest centre (m0). Without the boards and `../Code` you can still run the tests and `screens` ([Other
+commands](#other-commands-run-from-this-folder)).
 
 ## 1. Set up the bench
 
@@ -106,10 +105,8 @@ goes near the boards. Then they walk back to the start.
 - **When they expire.** 25 minutes after you walked them, when the app takes a new room level (**Measure room**
   found the room clearly quieter than earlier today), and when the app restarts. The next round then asks for your five
   walks again, after the visitor's. **Why: the room changes** (the crowd, doors, bags near the boards, a new room
-  measurement), so old walks stop matching your walks now. Tested (9 Nov model): about 70 % right with learning
-  walks from another day, about 87 % with fresh ones; within one app run, walks up to 27 minutes old matched as
-  well as new ones (your 32-minute home test, 8 Nov, checked again with the 9 Nov model), but two runs half an
-  hour apart did not.
+  measurement), so old walks stop matching your walks now. At home, walks up to 27 minutes old within one app run
+  still matched as well as new ones; walks from another run or day did not.
 - **What you see.** Between walks your line says how old they are ("Uzayr's walks: 6 min old.") or "Uzayr walks
   next round." ([picture](reports/screens/30_walks_expire_soon.png)). The light stays green: it is only about the
   room and the signal.
@@ -122,15 +119,11 @@ goes near the boards. Then they walk back to the start.
   old walks back, until you walk (your line says so: "Undo walk keeps the old ones.").
 - The game walks never change what it learned: it always compares with those learning walks (the visitor's 2,
   your 5). Why 5 for you: your walks are kept, so the extra three cost time only once every 25 minutes, and more
-  of them make your side steadier (about +0.6 points on the thesis people; not yet measured at home).
-- **Too close to call.** When a game walk's answer would be a close call, the card says "Walk once more!" ("Too
-  close to call: the same walker again."). The same person walks once more and the answer is decided on both walks
-  together ("(from both walks)"). On the thesis people (leave two out, the installed model) this happened on about
-  16 % of game walks (about 1 in 6) and took the score from about 89.5 % to about 92 %. The card waits for that
-  walk: **Measure room** (even if it fails), a lost signal, **New player** then **Cancel**, and **Keep going** in the
-  Quit or End game box all come back to it; **Undo walk** drops it (back to the game, nobody named), and so do
-  **End game**, a new player and **Quit**. To switch it off: `second_look: false` in `configs/openday.yaml`
-  (`classifier:`).
+  of them make your side steadier.
+- **Too close to call.** The card waits for the second walk: **Measure room** (even if it fails), a lost signal,
+  **New player** then **Cancel**, and **Keep going** in the Quit or End game box all come back to it; **Undo walk**
+  drops it (back to the game, nobody named), and so do **End game**, a new player and **Quit**. To switch "Walk
+  once more!" off: `second_look: false` in `configs/openday.yaml` (`classifier:`).
 
 **How long a round takes** (about 20 s per walk, there and back): the name and the visitor's two walks about
 1 minute, your five walks another 100 s when they are due (once every 25 minutes), then the game (about 20 s a
@@ -346,21 +339,18 @@ slowest motion, and subcarrier spread) and two measures of the body's echo acros
 nearby subcarriers move, and how much of the movement one pattern carries). It was trained on walks cut the way
 the app cuts them (from the Start click to the arrival), with each recording's own offset removed. Tested the way
 the app plays (2 + 2 learning walks in the same minutes, a forced choice, two people it never saw, leave two out):
-about 89.5 % right from one walk, and about 92 % with "Walk once more!". The 9 Nov model before it scored about
-87 % ([reports/eval_pair_20261109.md](reports/eval_pair_20261109.md); the older report is
-[reports/eval_pair_20261106.md](reports/eval_pair_20261106.md)). It does not recognise strangers, and it does not
-work across days. Two people who walk very alike are hard to tell apart: at home, Uzayr against one friend was
-close to a coin flip (about 55 %).
+about 89.5 % right from one walk, and about 92 % with "Walk once more!" (needed on about 1 game walk in 6). It does
+not recognise strangers, and it does not work across days. Two people who walk very alike are hard to tell apart:
+at home, Uzayr against one friend was close to a coin flip (about 55 %).
 
 **How a walk ends.** A walk is one click to the moment the walker stops; the standing still before and after
 is left out. It ends on the first of: "arrived" (the echo has peaked as the walker reached the X and stopped
 climbing for 0.5 s: about half a second after they stop), "stopped" (0.5 s of quiet), "operator" (They've
 stopped), "nothing" (5 s with almost no movement: Missed) or "limit" (9 s). After "arrived" the screen alone
 waits a little longer, until the echo has made no new peak for 1 s (`walk.screen_hold_s`; at most 1.5 s more,
-`walk.screen_max_extra_s`); the walk the model reads, and so its answer, stay exactly the same (`screen_hold_s:
-0.5` gives the old timing). The run log gives each walk's
-ending and its arrival time. On 12 stopwatch-timed home walks it found the stop within 0.27 s (middle value),
-and its speed was within 0.06 m/s of distance ÷ time on average.
+`walk.screen_max_extra_s`); the walk the model reads, and so its answer, stay the same. The run log gives each
+walk's ending and its arrival time. On 12 stopwatch-timed home walks it found the stop within 0.27 s (middle
+value), and its speed was within 0.06 m/s of distance ÷ time on average.
 
 > **Visitor sign:** Two Wi-Fi boards. No camera, nothing on you. / Your body changes the radio echo as you
 > walk: speed, step rate, swing. / Two walks to learn you, then it tells you apart from me.
@@ -368,67 +358,45 @@ and its speed was within 0.06 m/s of distance ÷ time on average.
 ## The screen
 
 - **Top line:** "Uzayr vs *name*" at the left, the light in the top-right corner.
-- **Two columns under it.** Left: the lane, level with the top row of small buttons, then the two pictures, as wide
-  and as tall as the screen allows; the 3D picture's top lines up with the second row of small buttons. Right: the
-  small buttons in two rows (Redo my walks, End game, Measure room; then Details and Quit), exactly as wide as the
-  four tiles under them. Both pictures' upright titles ("Amplitude change", "Speed (m/s)") stand in one column at
-  the left edge, and the 3D picture's upright sits right above the speed picture's axis.
+- **Two columns under it.** Left: the lane, then the two pictures, as large as the screen allows. Right: the small
+  buttons in two rows (Redo my walks, End game, Measure room; then Details and Quit), and the four tiles under them.
 - **Above the pictures: the lane** ([picture](reports/screens/15_walking_game.png)): where the walker is, from START
-  (the back mark) to the X, as a dot on a track that fills in behind it; beside the X a few words: "Walking …",
-  "Nearly there", "On the X". Between walks only START, the track and the X show, dim. The dot moves only while the
-  Wi-Fi sees someone moving: it is the Speed tile's own reading added up from the click (the distance walked), over
-  the distance from the back mark to the X (`lane.length_m` in `configs/openday.yaml`, 3.2 m; leaving out the odd
-  reading over 2 m/s, which at home was a far walker's noise). It never goes back. From three quarters of the way it
-  slows down, and it never reaches the X by itself: it goes onto the X when the walk ends (the moment its readings
-  are taken, a little before the answer shows), and stays there while the walker goes back, fading out after 3 s. A
-  missed walk, **Cancel walk**, **Undo walk** and a lost signal leave it at rest (no dot), and every walk starts
-  again from START (a second look too). The dot is in the colour of whose learning turn it is (the visitor's orange,
-  Uzayr's purple), yellow in the game. It is only a picture: nothing in it reaches a walk, its end or an answer, and
-  `lane.show: false` takes it away (the 3D picture then reaches up to the small buttons' top again, as before). How
-  close it is: halfway along, the dot was about 0.3 to 0.4 m from the walker on the thesis walks (a 5 m line with a
-  press at every metre, counting the screen's own delay of about 0.2 s), and about 0.6 m on the home walks (no
-  presses there: a steady walk assumed). What it cannot do: it does not see where you stand, only how far you have
-  walked. At home the dot often waits 1 to 2 s on START, while the walker is far from the boards and faint.
-  "On the X" comes when the app sees the walk end: about a second after the walker stops, sometimes 2 to 3 s (sooner
-  with **They've stopped**), and in about 1 walk in 4 or 5 a little early, because that walk ended early.
-- **Left, top:** "What the Wi-Fi sees: each subcarrier's amplitude" (top right of the picture): how much the Wi-Fi
-  signal's amplitude wobbles on every subcarrier, drawn in 3D as bars, one bar per subcarrier, so each subcarrier's
-  value stands on its own. There is a row of bars every 0.16 s for the last 4 s. The axes are labelled. Left to right
-  is the subcarrier (-26 to +28, each a slightly different radio frequency; "Subcarrier" under the numbers; there is
-  no bar at 0, because Wi-Fi leaves the middle subcarrier empty). Front to back is time: "now" is in front, "-4 s" at
-  the back. Up is "Amplitude change". The receiver's 103 numbers are two measurements of these 54 subcarriers, put in
-  frequency order for the picture. When nobody moves, the bars lie flat on the floor, in dark purple. When someone
-  walks, they stand up and change colour as they rise: purple, then pink and orange, and yellow for the tallest.
-  They are taller where that subcarrier wobbles more, and taller the more the room moves. Older rows fade toward the
-  background.
-  Why a wobble and not the signal itself: a walk barely changes the signal's level (on the home recording, only
-  2-3 times what standing still gives, a few %), so a picture of the level hardly moves. What a walk does is make the
-  signal flicker some 5-40 times a second, and that is what the speed picture below turns into speed. So each
-  bar is that flicker, cleaned up the same way as for the speed picture (the high-pass and the same 3 PCA
-  components across the subcarriers). How tall the bars stand comes from the speed picture's own brightness
-  against the measured room, taken over the last half second so a single blip in a still room barely lifts them
-  (up to 1.2x the room's: flat; 20x or more: tallest). A crowd moving near the boards makes
-  them stand up too. +27 and +28 (the band's noisy edge) are drawn no taller than +26. It is only a picture: nothing
-  in it reaches a walk or an answer. While the receiver is silent, the box shows only its title and the warning.
-  The first bars appear 2 s after the signal starts (like the speed picture's first column). `ui.ridge_s` sets how
-  many seconds the picture keeps (4).
+  (the back mark) to the X, as a dot on a track that fills in behind it, with a few words beside the X: "Walking …",
+  "Nearly there", "On the X". Between walks only START, the track and the X show, dim. The dot is the Speed tile's
+  reading added up from the click (the distance walked), over the distance from the back mark to the X
+  (`lane.length_m` in `configs/openday.yaml`, 3.2 m). It moves only while the Wi-Fi sees someone moving, never goes
+  back, slows down from three quarters of the way, and goes onto the X only when the walk ends; it fades out 3 s
+  later. A missed walk, **Cancel walk**, **Undo walk** and a lost signal leave it at rest. The dot is in the colour
+  of whose learning turn it is (the visitor's orange, Uzayr's purple), yellow in the game. It shows how far you have
+  walked, not where you stand: halfway along it was about 0.6 m off on the home walks, it often waits 1 to 2 s on
+  START while the walker is far from the boards and faint, and "On the X" comes about a second after the walker
+  stops (sooner with **They've stopped**). It is only a picture: nothing in it reaches a walk or an answer, and
+  `lane.show: false` takes it away.
+- **Left, top:** "What the Wi-Fi sees: each subcarrier's amplitude": how much the Wi-Fi signal's amplitude wobbles
+  on every subcarrier, drawn in 3D as one bar per subcarrier, a row of bars every 0.16 s for the last 4 s ("now" in
+  front, "-4 s" at the back). Left to right is the subcarrier (-26 to +28, each a slightly different radio
+  frequency; there is no bar at 0, because Wi-Fi leaves the middle subcarrier empty). When nobody moves, the bars
+  lie flat, in dark purple. When someone walks, they stand up and change colour as they rise: purple, then pink and
+  orange, and yellow for the tallest. A crowd moving near the boards makes them stand up too. Why a wobble and not
+  the signal itself: a walk barely changes the signal's level (a few %), but it makes the signal flicker some 5-40
+  times a second, and that flicker is what the speed picture below turns into speed. It is only a picture: nothing
+  in it reaches a walk or an answer. `ui.ridge_s` sets how many seconds it keeps (4).
 - **Left, below:** "Turned into speed" for the last 6 s, in the same colours as the bars: dark is a still room,
   and movement shows purple, then orange and yellow the stronger it is; higher means faster (m/s). The
   white line is the body's speed.
-- **Right:** Speed, Steps (a minute), Swing (leg swing) and Bounce. Speed updates live during a walk. Afterwards each tile shows
-  the last walk (while learning, in the colour of whose turn it was) against Uzayr's average and the visitor's,
-  and which one it was "like".
+- **Right:** Speed, Steps (a minute), Swing (leg swing) and Bounce. Speed updates live during a walk. Afterwards each
+  tile shows the last walk (while learning, in the colour of whose turn it was) against Uzayr's average and the
+  visitor's, and which one it was "like". On an answer from both walks the tiles show both walks' readings averaged
+  (the row "Both walks").
 - **Buttons:** your instructions on the left, then the small buttons, then the big one (section 4).
 - **Bottom card, for the crowd:** what to do ("Lerato's turn", "Walk to the X", with a small line under it), then
-  the answer in the person's colour (bigger, with nothing under it), "How sure" and what told the two apart. While learning, dots in two rows, the visitor's on top, then
-  yours (filled = done, outlined = now, faint = still to come; yours already filled when your walks are kept). "How sure" is how often answers this clear were right in testing on people the
-  model had never seen (leave two out), capped at 99 %. A close call (its margin below the model's line, 0.109) names
-  nobody yet: "Walk once more!" ("Too close to call: the same walker again."), and the answer then comes from both
-  walks (their readings averaged), marked "(from both walks)", with "How sure" from its own curve (how often answers
-  from two walks this clear were right in the same testing; fitted separately, see below). Still close after both
-  walks, it names the nearer person with a lower "How sure"; the log keeps the margins. There is no score on screen.
-  On that answer the tiles show the readings it was decided on, both walks averaged (the row "Both walks"), and
-  "like ..." is for them.
+  the answer in the person's colour, "How sure" and what told the two apart. While learning, dots in two rows, the
+  visitor's on top, then yours (filled = done, outlined = now, faint = still to come; yours already filled when your
+  walks are kept). "How sure" is how often answers this clear were right in testing on people the model had never
+  seen (leave two out), capped at 99 %. A close call (its margin below the model's line, 0.109) names nobody yet:
+  "Walk once more!", and the answer then comes from both walks, marked "(from both walks)", with "How sure" from its
+  own curve. Still close after both walks, it names the nearer person with a lower "How sure". There is no score on
+  screen.
 - **Red RECORDING box** (top line, middle): raw radio data is being saved. Home tests and bench sessions only,
   never on Open Day.
 - **Long names** are shortened where room is short, never drawn over anything: the card, the dots, the tiles
@@ -445,136 +413,108 @@ A visitor's name and walks live in memory only. They are never written or logged
 and has no visitor speed, step, swing or bounce values (only the decision and its margin), and typed names are
 logged as "<name entry>". They're wiped by **New player**, **End game** and by quitting. Uzayr's own learning
 walks are kept in memory for the next players while fresh (25 minutes), never written to a file (on the day the
-log names only their walk numbers; a recording writes their readings), and wiped when the app quits. A name-free count of players (`state/tally.json`) is kept. The decision model in
-`state/model/` holds only numbers fitted on the six thesis participants; no visitor walk or name is ever written
-there. It stays on the laptop: it is not in this repo. Only a recording (`run_solo_test.command` or `--record`)
-writes raw radio data, and it shows a red RECORDING box the whole time.
+log names only their walk numbers; a recording writes their readings), and wiped when the app quits. A name-free
+count of players (`state/tally.json`) is kept. The decision model in `state/model/` holds only numbers fitted on
+the six thesis participants; no visitor walk or name is ever written there. It stays on the laptop: it is not in
+this repo. Only a recording (`run_solo_test.command` or `--record`) writes raw radio data, and it shows a red
+RECORDING box the whole time.
 
 ## Other commands (run from this folder)
 
 ```
 PYTHONDONTWRITEBYTECODE=1 /opt/anaconda3/bin/python3 -m openday replay --script scripts/demo_two_people.yaml   # demo without boards (needs ../Code)
 PYTHONDONTWRITEBYTECODE=1 /opt/anaconda3/bin/python3 -m openday screens           # redraw every picture in reports/screens/
-PYTHONDONTWRITEBYTECODE=1 /opt/anaconda3/bin/python3 -m openday eval              # offline evaluation -> reports/; also rewrites
-                                                    # the config lines marked "fitted by eval" (--no-write: report only)
-PYTHONDONTWRITEBYTECODE=1 /opt/anaconda3/bin/python3 -m openday eval-pair      # the older leave-two-out report (prints it only;
-                                                    # --write would replace the installed model with the older m1_core one)
 PYTHONDONTWRITEBYTECODE=1 /opt/anaconda3/bin/python3 -m openday keytest           # print the name of every key pressed
 PYTHONDONTWRITEBYTECODE=1 /opt/anaconda3/bin/python3 -m openday bench-checklist   # the two-person bench protocol
-PYTHONDONTWRITEBYTECODE=1 /opt/anaconda3/bin/python3 -m openday eval --bench bench/<folder>   # score a bench session
+PYTHONDONTWRITEBYTECODE=1 /opt/anaconda3/bin/python3 -m openday eval --bench bench/<folder>   # score a recording
 PYTHONDONTWRITEBYTECODE=1 /opt/anaconda3/bin/python3 -m openday bench-check bench/<folder>   # walk detection on recorded runs
 PYTHONDONTWRITEBYTECODE=1 /opt/anaconda3/bin/python3 -m pytest -p no:cacheprovider   # tests, about 90 s
 ```
 
-Tests that need what only the laptop has skip themselves without it: the ones that read the thesis code or
-recordings (the replays, bench scoring, the copies of the thesis functions) skip without `../Code` or
-`configs/people.local.yaml`; the three that check the trained model also skip without `state/model/`; the home-run
-check skips without its recording in `bench/`; the participant-name check skips without the code list or
-outside a git work tree; and the no-bytecode check skips without `../Code`.
-
-`screens` needs no boards: it drives the app with made-up walks and fixed answers, writes one picture per screen
-and message, `flow.png` (a round, in order) and `lights.png`, and deletes its own old pictures there (names like
-`07_walking.png`, `flow.png`, `lights.png`), never any other file. `--out DIR` writes them somewhere else. The
-"How sure" numbers in the answer pictures come from the laptop's trained model; on a copy without it, a redraw shows
-lower numbers (the raw m0 margin).
-
-`bench-check` takes one run folder or a folder of runs, re-runs every recorded walk through the live chain and
-prints how each ended (live and offline), the false walks in the quiet spans between walks and the room level
-over the run; `--max-s S` tries another walk limit. It prints only and writes nothing.
-
-The launcher passes extra options to `live`: `--windowed` (start in a window), `--port P` (choose the receiver
-yourself), `--reset` (reset the receiver at start-up; off by default), `--new-room` (forget today's room level, kept
-in `state/baseline_live.json`, after moving the boards: section 6) and `--record DIR` (recording; this is what
-`run_solo_test.command` uses). In a recording, learning walks write their label by turn (`source: "turn"`), an
-optional **It was ...** click writes a game walk's label, unlabelled game walks are left out of the scoring, and
-**Measure room** is always needed (an old measurement is never reused, and a recording's never becomes today's room
-level). A round that reuses Uzayr's walks writes a `uzayr_reused` event with the walk ids it reused, **Redo my
-walks** a `uzayr_redo` event (`uzayr_kept` when **Undo walk** takes it back), and **Measure room** while you are
-still learning a `uzayr_dropped` event, so the bench tools can rebuild the pools each game walk was decided on
-(`bench.bench_rounds`, from each learning walk's
-own walk event, so older recordings too; `bench_walks` gives them per walk); `bench-check` prints which rounds
-reused or redid your walks. `eval --bench` also scores the app's round, 2 + 5 learning walks (the visitor's 2,
-your 5), and the older round, 2 + 2; a second look takes no place of its own among the pool and the 20 test walks,
-and the close call before it is scored on both walks averaged, as the round showed it. A close call's walk
-event says `"second_look": true`; the walk after it carries `"second_of"` (the close call's id), its decision from
-both walks (`"both": true`) and its own (`"alone"`); an **It was ...** click on that answer labels both walks (the
-first one's label event says `both_with`). `bench.second_looks` decides those pairs again from the raw data,
-`eval --bench` reports them and `bench-check` lists them.
+- **The launcher** passes extra options to `live`: `--windowed` (start in a window), `--port P` (choose the
+  receiver yourself), `--reset` (reset the receiver at start-up; off by default), `--new-room` (forget today's
+  room level, kept in `state/baseline_live.json`, after moving the boards: section 6) and `--record DIR` (a
+  recording; this is what `run_solo_test.command` uses).
+- **A recording** (`--record`) saves, for each run, the raw radio data (`bench_RX.bin`) and the app's events
+  (`events.jsonl`): every walk and click, who walked (a learning walk by its turn, a game walk by an **It was ...**
+  click; a game walk with no click is left out of the scoring), which of your walks each round reused or redid,
+  and which walk was the second look of which close call. **Measure room** is always needed in a recording (an
+  old measurement is never reused, and a recording's never becomes today's room level).
+- **`eval --bench`** scores a two-person session recorded as `bench-checklist` describes, into
+  `reports/bench_<folder>.md` (laptop only). The first line is PASS or FAIL: the simple rule (m0) with the 5 + 5
+  alternating learning walks, 18 of the 20 test walks needed. Then the shipped model with those 5 + 5, with the
+  app's round (the visitor's 2, your 5) and with 2 + 2 (the round `training_home/retrain.py` scores), the pool from
+  before the break, whether the two walkers' speeds overlap, and the second looks (a close call walked once more is
+  scored on both walks averaged, as the round showed it).
+- **`bench-check`** takes one run folder or a folder of runs, re-runs every recorded walk through the live chain
+  and prints how each ended (live and offline), the false walks in the quiet spans between walks, the room level
+  over the run, and which rounds reused or redid your walks; `--max-s S` tries another walk limit. It prints only
+  and writes nothing.
+- **`screens`** needs no boards: it drives the app with made-up walks and fixed answers, writes one picture per
+  screen and message, `flow.png` (a round, in order) and `lights.png`, and deletes only its own old pictures there
+  (names like `07_walking_learning.png`), never any other file. `--out DIR` writes them somewhere else. The "How
+  sure" numbers in the answer pictures come from the laptop's trained model; without it a redraw shows lower
+  numbers (the raw m0 margin).
+- **The tests** that need what only the laptop has skip themselves without it: those that read the thesis code or
+  recordings skip without `../Code` or `configs/people.local.yaml`; those that check the trained model without
+  `state/model/`; the home-run check without its recording in `bench/`; the participant-name check outside a git
+  work tree.
+- **The replays** are plumbing tests: they play recordings of thesis participants the model was trained on, so
+  their results say nothing about accuracy on new people.
+- **A presenter clicker** that sends PageDown / PageUp (or Right / Left) works without changes: forward is the big
+  button, back cancels a walk, redoes a learning turn, or right after Redo my walks keeps your old walks. For any
+  other clicker, run `keytest`, press its buttons, and add the printed names to `keys:` in `configs/openday.yaml`.
 
 **The round's settings** (`pools:` in `configs/openday.yaml`): `n_enrol` (the visitor's learning walks, 2),
-`n_enrol_uzayr` (yours, 5; set it to the same as `n_enrol` for the older round), `enrol_order`
-(`visitor_first`, or `alternate`: you first, then taking turns) and `uzayr_reuse_min` (25; 0 = you walk in every
-round, and there is no Redo my walks). Why 25: in the home runs your walks did not age within one app run, and the
-32-minute test (8 Nov) went to walks 27 minutes old (re-checked with the 9 Nov model: no ageing there either). The
-age is checked at **New player**, so that game then runs on walks up to about 28-30 minutes old, just past the data;
-the worst case the data allow is about 3-4 points lower.
-If you change it, change "25 minutes" in this guide too and run `screens`. The second look is `classifier:`
-`second_look` (true; false = one walk per answer, as before). Its "How sure" curve is **not** fitted with the model:
-a separate tool fits it afterwards (`training_home/fit_cal2.py`, laptop only; it refits the model's recipe on the
-thesis people, leave two out, and walks each close call once more) and adds it to the model file (`cal2_m` /
-`cal2_p` in `state/model/model.json`, laptop only like the model). A retrained model (`training_home/retrain.py`,
+`n_enrol_uzayr` (yours, 5), `enrol_order` (`visitor_first`, or `alternate`: you first, then taking turns) and
+`uzayr_reuse_min` (25; 0 = you walk in every round, and there is no Redo my walks). Why 25: in the home runs your
+walks did not age within one app run (a 32-minute test went to walks 27 minutes old). The age is checked at **New
+player**, so a game can run on walks up to about 28-30 minutes old. If you change it, change "25 minutes" in this
+guide too and run `screens`.
+
+**The second look** is `second_look` under `classifier:` (true; false = one walk per answer). Its "How sure" curve
+is **not** fitted with the model: `training_home/fit_cal2.py` (laptop only) fits it afterwards and adds it to the
+model file (`cal2_m` / `cal2_p` in `state/model/model.json`). A retrained model (`training_home/retrain.py`,
 `install.py`) has none until `fit_cal2.py` is run on it again; until then an answer from both walks reads the
 one-walk curve, and the run log says so when the app starts.
 
-The replays are plumbing tests: they play recordings of thesis participants the model was trained on, so their
-results say nothing about accuracy on new people (the leave-two-out report does).
-
-A presenter clicker that sends PageDown / PageUp (or Right / Left) works without changes: forward is the big
-button, back cancels a walk, redoes a learning turn, or right after Redo my walks keeps your old walks. For any
-other clicker, run `keytest`, press its buttons, and add the printed names to `keys:` in `configs/openday.yaml`.
-
 ## Files
 
-**Reading the code.** Start with `__main__.py` to see what you can run. The app is a pipeline, and the files
-follow it:
+The app is a pipeline, and the files in `openday/` follow it. Start with `__main__.py` to see what you can run.
 
-- `chain.py` turns the receiver's Wi-Fi packets into the speed picture (one column every 53 ms) and the 3D bars.
-- `walks.py` collects one walk's columns, decides when the walk ended and measures it (speed, steps, swing,
-  bounce, plus the thesis's gait features).
-- `lane.py` adds up the walk's speed into where the walker is on the lane (for the screen only).
-- `models.py` decides whose walk it was by comparing it with each person's learning walks.
-- `app.py` is the show: what each click does, whose turn it is, the light, and what the screen should say. It builds
-  one plain dictionary, the "view", and at the bottom it starts the app live or on a replay.
-- `screen.py` only draws that dictionary.
-- `recordings.py` lets the app run without the boards by playing thesis recordings.
+- `chain.py`: Wi-Fi packets → the speed picture (one column every 53 ms) and the 3D bars.
+- `walks.py`: one walk: when it ends, its four numbers (speed, steps, swing, bounce), and the thesis's gait
+  features.
+- `lane.py`: where the walker is on the lane, START to the X (display only).
+- `models.py`: who walked: the nearest-centre rule, the trained model, the learning walks.
+- `app.py`: the show: what each click does, whose turn it is, the light, and what the screen should say (one plain
+  dictionary, the "view"); at the bottom, running it live or on a replay.
+- `screen.py`: the window; it only draws the view.
+- `recordings.py`: playing thesis recordings (by participant code) instead of the boards, and the replay playlists.
+- `bench.py`: the home-test tools: `eval --bench`, `bench-check`, `bench-checklist`.
+- `screenshots.py`: `screens` (the pictures in this README).
+- `evaluate.py`: two helpers the laptop's retraining tools use (`training_home/`); the app never calls them.
+- `__init__.py`: where things live, the settings loader and the participant codes. `__main__.py`: the command line.
 
-The other files are tools you need only away from the show: `evaluate.py` (how good is it, retraining), `bench.py`
-(scoring home test recordings) and `screenshots.py` (the pictures in this README). Every setting is in
-`configs/openday.yaml`. Where things live is in `openday/__init__.py`.
+The rest:
 
 - `run_openday.command`: double-click to start the app on the boards, full screen. `run_solo_test.command`: the
   same, recording a home test into `bench/solo_<date>/`.
-- `openday/`: the code, in reading order:
-  - `__init__.py`: where things live, the settings loader and the participant codes.
-  - `chain.py`: Wi-Fi packets → the speed picture and the 3D bars.
-  - `walks.py`: one walk — when it ends, its four numbers, and the thesis's gait features.
-  - `lane.py`: where the walker is on the lane, START to the X (display only).
-  - `models.py`: who walked — the nearest-centre rule, the trained model, the learning walks.
-  - `app.py`: the app — clicks, turns, the light, what the screen says — and how it runs live or on a replay.
-  - `screen.py`: the window; it only draws.
-  - `recordings.py`: the thesis recordings (by participant code) and replay playlists.
-  - `evaluate.py`: `eval` and `eval-pair`.
-  - `bench.py`: `eval --bench`, `bench-check`, `bench-checklist`.
-  - `screenshots.py`: `screens`.
-  - `__main__.py`: the command line.
-- `configs/openday.yaml`: every setting. Lines marked "fitted by eval" are rewritten by `eval` / `eval-pair`.
+- `configs/openday.yaml`: every setting. Lines marked "fitted" were fitted on the thesis recordings.
 - `scripts/`: replay playlists. Walks are named by participant code.
-- `reports/`: the evaluation reports (participants by code) and the screenshots (`screens/`).
-- `tests/`: pytest, one file per part: `test_chain`, `test_walks`, `test_models` (`models.py` and `evaluate.py`'s
-  model fitting), `test_app`, `test_screen` (`screen.py` and `screenshots.py`), `test_lane` (`lane.py`, the lane in
-  the app and on the screen), `test_replay` (`recordings.py` and the replays), `test_bench`. `helpers.py` holds the
-  fake receiver and the shared app drivers; `overlap.py` checks that nothing on the screen overlaps;
-  `test_zz_untouched.py` runs last and checks that
-  `../Code` was not touched, that no participant name is in a published file, that only code, text and
-  picture files are published, and (on the laptop) that no `__pycache__` was written. Tests that need `../Code`, the
-  code list or the trained model skip themselves without them.
-- **Laptop only, not in this repo:**
-  - the thesis code and recordings in `../Code`;
-  - `configs/people.local.yaml` (the list that joins participant codes to names);
-  - `state/` (the trained model, the room measurement, the visitor count, caches);
-  - `bench/`, `logs/`, `reports/bench_*.md`;
-  - `reports/progress.md` (the build log);
-  - `training_20261109/` (the record of the 9 Nov retrain).
+- `reports/screens/`: the screenshots.
+- `tests/`: pytest, one file per part: `test_chain`, `test_walks`, `test_models`, `test_app`, `test_screen`
+  (`screen.py` and `screenshots.py`), `test_lane` (`lane.py`, the lane in the app and on the screen), `test_replay`
+  (`recordings.py` and the replays), `test_bench`. `helpers.py` holds the fake receiver and the shared app
+  drivers; `overlap.py` checks that nothing on the screen overlaps; `test_zz_untouched.py` runs last and checks
+  that `../Code` was not touched, that no participant name is in a published file, that only code, text and
+  picture files are published, and (on the laptop) that no `__pycache__` was written.
 - `.gitignore`: what stays on the laptop.
-
-The thesis code in `../Code` is only read, never written.
+- **Laptop only, not in this repo:**
+  - the thesis code and recordings in `../Code` (only ever read, never written);
+  - `configs/people.local.yaml` (the list that joins participant codes to names);
+  - `state/` (the trained model and its backups, the room level, the visitor count);
+  - `bench/` (the home-test recordings), `logs/` (the run logs), `reports/bench_*.md` (their scores);
+  - `reports/progress.md` (the build log);
+  - `training_home/` (retraining with home walks) and `training_20261109/` (the 9 Nov retrain, which
+    `training_home/` reads).

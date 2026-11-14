@@ -5,7 +5,7 @@
 # participant's name, so the privacy check can grep for it). Day 1 natural; each step plays a random unused S pass
 # (towards the boards).
 # A plumbing test: the shipped model was trained on all six thesis people, P4 and P3 included, so the
-# replay's tally says nothing about accuracy on new people (reports/eval_pair_*.md does).
+# replay's tally says nothing about accuracy on new people (the README's "What it is" does).
 uzayr_standin: P4
 baseline: {name: P4, day: 1}          # its empty_idspot fills the idle gaps and the Ctrl+B baseline
 seed: 7

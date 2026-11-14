@@ -12,8 +12,8 @@ reader stamps one `t_mono` per read, so about seven packets share each host stam
 `fit_timebase`). `t_mono` is used only through the clock offset, to place the operator's click on the device clock.
 
 Every stage keeps its own state and emits outputs in sample order, so the result does not depend on how the
-packets are batched: the offline evaluation feeds large batches, the live app small ones, and both get the same
-columns (tests/test_chain.py checks this).
+packets are batched: the bench tools feed large batches, the live app small ones, and both get the same columns
+(tests/test_chain.py checks this).
 """
 
 from __future__ import annotations

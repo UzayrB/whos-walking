@@ -16,7 +16,7 @@ import sys
 # --- 1. Start-up switches ---
 
 # Before anything can import `pipeline`: no bytecode may be written into Code/, which is only ever read. The
-# environment variable carries this into any child process (multiprocessing, the identify_board subprocess).
+# environment variable carries this into any child process (multiprocessing).
 sys.dont_write_bytecode = True
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 # Small matrices: one BLAS thread is faster and keeps the CPU budget honest (the thesis runs OMP_NUM_THREADS=1).
@@ -45,8 +45,8 @@ def use_code() -> None:
     """Put Code/ on sys.path so the light `pipeline.io` modules import. Code/ is read, never written (the start-up
     switches above have already turned bytecode off)."""
     if not os.path.isdir(os.path.join(CODE, "pipeline")):
-        raise SystemExit(f"The private thesis code is not at {CODE}: live, replay, eval, eval-pair and "
-                         "bench-check need it (see the README).")
+        raise SystemExit(f"The private thesis code is not at {CODE}: live, replay, eval --bench and bench-check "
+                         "need it (see the README).")
     if CODE not in sys.path:
         sys.path.append(CODE)
 

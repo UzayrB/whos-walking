@@ -16,7 +16,7 @@ import openday  # noqa: E402
 
 @pytest.fixture
 def cfg_shipped():
-    """The configuration as shipped (the eval-pair winner)."""
+    """The configuration as shipped."""
     return openday.load_config()
 
 

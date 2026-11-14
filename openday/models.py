@@ -1,33 +1,25 @@
-"""Who walked: the nearest-centre rule (m0), the trained models (m1, m2) and the learning walks.
+"""Who walked: the nearest-centre rule (m0), the trained model (m1) and the learning walks.
 
 This file, in order:
   1. The nearest-centre rule (m0): decide_m0, one walk's readouts against the two pools, with a margin and
      "not sure".
-  2. The trained models: the features they use, Model (saved as JSON) and load_model. evaluate.py fits them
-     on the thesis people.
+  2. The trained model: the features it uses, Model (saved as JSON) and load_model. It is fitted on the thesis
+     people on the laptop (training_home/, not in this repo).
   3. Deciding one walk with a model (decide), two walks averaged for the second look (average_walks; its How
      sure is Model.how_sure_both), and the plain words for what separated it (why).
   4. The pools (each person's learning walks, in memory only) and the day's tally.
 
-Two-person decisions for people the model never saw in training (the speaker-verification idea).
-
-Every model learns, from the thesis people, how walks of one person differ from walks of two different people,
-and then compares a new walk with the two enrolled people of the day:
+Two-person decisions for people the model never saw in training (the speaker-verification idea). The model
+learns, from the thesis people, how walks of one person differ from walks of two different people, and then
+compares a new walk with the two enrolled people of the day:
 
   m0  nearest centroid on the four readouts (speed, steps, swing, bounce): decide_m0. It needs no training, and
       the app falls back to it when no trained model loads.
   m1  learned whitening: the within-person covariance of the training people (shrunk towards its diagonal)
-      whitens the features; the between-person covariance is then diagonalised in that space, and `keep`
-      directions with the largest between/within ratio are kept (0 keeps all). Nearest centroid there. With
-      `plda` (calibration C2), each centroid is shrunk towards the training mean by its number of walks and the
-      distance allows for the centroid's remaining uncertainty: a light PLDA.
-  m2  pairwise same/different: L2 logistic regression on |za - zb| and za * zb (standardised features) over
-      pairs of training walks. Same-person pairs are taken only ACROSS recordings, so "same recording" cannot be
-      learned as "same person" (different people are always different recordings). On the day: the mean
-      P(same) of the walk against each person's enrolment walks; the higher wins.
+      whitens the features; the between-person covariance is then diagonalised in that space. Nearest centroid
+      there.
 
-Calibration C1 (`session_centre`) centres the standardisation on the session's own enrolment walks (both
-people, no labels). Only thesis data is ever fitted or saved here; a visitor's walks are only ever passed in.
+Only thesis data is ever fitted or saved here; a visitor's walks are only ever passed in.
 """
 
 from __future__ import annotations
@@ -36,7 +28,6 @@ import itertools
 import json
 import os
 import time
-import warnings
 from dataclasses import dataclass, field
 from typing import Optional, Sequence
 
@@ -120,7 +111,7 @@ def vec(f: dict, names: Sequence[str]) -> np.ndarray:
 
 @dataclass
 class Model:
-    kind: str                                      # "m0", "m1" or "m2"
+    kind: str                                      # "m1" (the trained model) or "m0" (decide's speed-only check)
     names: list
     mu: np.ndarray                                 # training mean and SD (standardisation)
     sd: np.ndarray
@@ -128,15 +119,12 @@ class Model:
     prior_sd: dict = field(default_factory=dict)   # m0 only
     P: Optional[np.ndarray] = None                 # m1: (r, d) projection from standardised features
     lam: Optional[np.ndarray] = None               # m1: between-person variance per direction (within = 1)
-    w: Optional[np.ndarray] = None                 # m2: logistic weights on [|za - zb|, za * zb]
-    b: float = 0.0
-    plda: bool = False                             # C2's centroid shrinkage (m1)
-    session_centre: bool = False                   # C1
     meta: dict = field(default_factory=dict)
     cal_m: Optional[np.ndarray] = None             # "How sure": margin knots ...
     cal_p: Optional[np.ndarray] = None             # ... and how often decisions that clear were right (leave-two-out)
     cal2_m: Optional[np.ndarray] = None            # the same for an answer from both walks (the second look): the
     cal2_p: Optional[np.ndarray] = None            # two walks' margin -> how often such answers were right
+    plda = session_centre = False                  # (no longer options; the laptop's retraining tools check both)
 
     def how_sure(self, margin: float) -> Optional[float]:
         """The share of leave-two-out decisions with this margin that were right (rising with the margin)."""
@@ -157,9 +145,8 @@ class Model:
         arr = lambda a: None if a is None else np.asarray(a, float).tolist()  # noqa: E731
         return {"kind": self.kind, "names": list(self.names), "mu": arr(self.mu), "sd": arr(self.sd),
                 "tau": float(self.tau), "prior_sd": dict(self.prior_sd), "P": arr(self.P), "lam": arr(self.lam),
-                "w": arr(self.w), "b": float(self.b), "plda": bool(self.plda),
-                "session_centre": bool(self.session_centre), "meta": self.meta, "cal_m": arr(self.cal_m),
-                "cal_p": arr(self.cal_p), "cal2_m": arr(self.cal2_m), "cal2_p": arr(self.cal2_p)}
+                "meta": self.meta, "cal_m": arr(self.cal_m), "cal_p": arr(self.cal_p), "cal2_m": arr(self.cal2_m),
+                "cal2_p": arr(self.cal2_p)}
 
     @staticmethod
     def from_json(d: dict) -> "Model":
@@ -170,11 +157,11 @@ class Model:
                 return arr(a)                              # (load_model then drops it, logged)
             except (TypeError, ValueError):
                 return np.array([np.nan])
+        if d["kind"] not in ("m0", "m1") or d.get("plda") or d.get("session_centre"):   # (older options: m2, C1, C2)
+            raise ValueError(f"model kind {d['kind']} with options this app no longer has")
         return Model(d["kind"], list(d["names"]), arr(d["mu"]), arr(d["sd"]), float(d["tau"]),
-                     dict(d.get("prior_sd", {})), arr(d.get("P")), arr(d.get("lam")), arr(d.get("w")),
-                     float(d.get("b", 0.0)), bool(d.get("plda", False)), bool(d.get("session_centre", False)),
-                     dict(d.get("meta", {})), arr(d.get("cal_m")), arr(d.get("cal_p")), extra(d.get("cal2_m")),
-                     extra(d.get("cal2_p")))
+                     dict(d.get("prior_sd", {})), arr(d.get("P")), arr(d.get("lam")), dict(d.get("meta", {})),
+                     arr(d.get("cal_m")), arr(d.get("cal_p")), extra(d.get("cal2_m")), extra(d.get("cal2_p")))
 
     def save(self, path: str) -> None:
         tmp = path + ".tmp"
@@ -188,10 +175,9 @@ class Model:
             return Model.from_json(json.load(f))
 
     # -- standardised features --------------------------------------------------------------------------
-    def z(self, X: np.ndarray, centre: Optional[np.ndarray] = None) -> np.ndarray:
-        """(X - mean) / SD with missing values at the mean (z = 0). `centre` replaces the training mean (C1)."""
-        mu = self.mu if centre is None else np.where(np.isfinite(centre), centre, self.mu)
-        Z = (np.atleast_2d(X) - mu) / self.sd
+    def z(self, X: np.ndarray) -> np.ndarray:
+        """(X - mean) / SD with missing values at the mean (z = 0)."""
+        Z = (np.atleast_2d(X) - self.mu) / self.sd
         return np.where(np.isfinite(Z), Z, 0.0)
 
 
@@ -244,50 +230,19 @@ def load_model(cfg: dict, log=print) -> Optional[Model]:
 # --- 3. Deciding one walk with a model ---
 
 
-def _pair_feats(za: np.ndarray, zb: np.ndarray) -> np.ndarray:
-    return np.concatenate([np.abs(za - zb), za * zb], axis=-1)
-
-
-def _session_centre(m: Model, enrol: dict) -> Optional[np.ndarray]:
-    if not m.session_centre:
-        return None
-    allx = np.concatenate([np.atleast_2d(v) for v in enrol.values()])
-    with np.errstate(all="ignore"), warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)       # a feature missing in every walk stays missing
-        return np.nanmean(allx, axis=0)
-
-
 def scores(m: Model, x: np.ndarray, enrol: dict) -> tuple[dict, float]:
-    """Per person, a score where lower is nearer (m0, m1: distance; m2: 1 - mean P(same)), and the margin."""
+    """Per person, the distance (lower is nearer), and the margin."""
     if m.kind == "m0":
         prior = {"classifier": {"tau": m.tau, "prior_sd": m.prior_sd}}
         d = decide_m0(np.asarray(x, float), {k: np.asarray(v, float) for k, v in enrol.items()}, m.names, prior,
                       with_speed_only=False)
         return d.dist, d.margin
-    centre = _session_centre(m, enrol)
-    zx = m.z(x, centre)[0]
-    out = {}
-    if m.kind == "m1":
-        yx = m.P @ zx
-        for k, E in enrol.items():
-            Y = m.z(E, centre) @ m.P.T
-            n = len(Y)
-            if m.plda:
-                s = n * m.lam / (n * m.lam + 1.0)
-                c, v = s * Y.mean(axis=0), m.lam / (n * m.lam + 1.0)
-                out[k] = float(np.sqrt((((yx - c) ** 2) / (1.0 + v)).sum()))
-            else:
-                out[k] = float(np.sqrt(((yx - Y.mean(axis=0)) ** 2).sum()))
-        a, b = sorted(out.values())
-        return out, (b - a) / (a + b) if a + b > 0 else 0.0
-    if m.kind == "m2":
-        for k, E in enrol.items():
-            ZE = m.z(E, centre)
-            p = 1.0 / (1.0 + np.exp(-(_pair_feats(np.broadcast_to(zx, ZE.shape), ZE) @ m.w + m.b)))
-            out[k] = float(1.0 - p.mean())
-        a, b = sorted(out.values())
-        return out, float(b - a)
-    raise ValueError(m.kind)
+    if m.kind != "m1":
+        raise ValueError(m.kind)
+    yx = m.P @ m.z(x)[0]
+    out = {k: float(np.sqrt(((yx - (m.z(E) @ m.P.T).mean(axis=0)) ** 2).sum())) for k, E in enrol.items()}
+    a, b = sorted(out.values())
+    return out, (b - a) / (a + b) if a + b > 0 else 0.0
 
 
 def decide(m: Model, f: dict, pools: dict) -> Optional[Decision]:

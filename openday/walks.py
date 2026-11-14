@@ -44,18 +44,17 @@ class WalkWindow:
 
     `t_arrive` is the time of the running maximum when it passes both arrival tests, else the last active column
     (None with no active column). The gait window closes there. e0 (the room's median energy) is
-    threshold / dsp.active_k unless given. A rule whose key is 0 is off; `arrive=False` turns "arrived" off for
-    offline windows that already close at a known stop line. `hold_s` replaces `arrive_hold_s` (the app's second,
-    screen-only window waits walk.screen_hold_s).
+    threshold / dsp.active_k unless given. A rule whose key is 0 is off. `hold_s` replaces `arrive_hold_s` (the
+    app's second, screen-only window waits walk.screen_hold_s).
     """
 
     def __init__(self, cfg: dict, t_click: float, threshold: float, hop_s: float, e0: Optional[float] = None,
-                 arrive: bool = True, hold_s: Optional[float] = None) -> None:
+                 hold_s: Optional[float] = None) -> None:
         w = cfg["walk"]
         self.t0, self.thr, self.hop_s = float(t_click), float(threshold), float(hop_s)
         self.min_active, self.quiet, self.max_s = float(w["min_active_s"]), float(w["quiet_s"]), float(w["max_s"])
         self.e0 = float(e0) if e0 is not None else self.thr / float(cfg["dsp"]["active_k"])
-        self.arrive_x = float(w.get("arrive_min_x", 80.0)) if arrive else 0.0
+        self.arrive_x = float(w.get("arrive_min_x", 80.0))
         self.arrive_hold = float(w.get("arrive_hold_s", 0.5)) if hold_s is None else float(hold_s)
         self.arrive_jump = float(w.get("arrive_jump_x", 4.0))
         self.give_up_s = float(w.get("give_up_s", 5.0))
@@ -108,7 +107,7 @@ class WalkWindow:
         """The operator says the walker has stopped (device time t_dev). Ignored (False) when under `stop_min_s`
         after the click (a double press) or once the walk has ended. Otherwise the walk ends "operator" on the first
         column at or after t_dev, at once if that column is already in (the columns after it are dropped, so the
-        walk is the one the offline evaluation sees with the stop applied first); returns True when accepted."""
+        walk is the one the bench tools see with the stop applied first); returns True when accepted."""
         if self.ended or t_dev - self.t0 < self.stop_min - 1e-9:
             return False
         self.t_stop = float(t_dev) if self.t_stop is None else min(self.t_stop, float(t_dev))
@@ -524,7 +523,7 @@ def shape_features(AN: np.ndarray, bd: np.ndarray, groups: Optional[np.ndarray] 
 
 def walk_gait(raw_t: np.ndarray, raw_a: np.ndarray, t_click: float, t_end: float, cfg: dict) -> dict:
     """The gait set over one walk: the raw samples from the click to t_end (live and bench: the walk's
-    arrival, WalkWindow.t_arrive; eval on the thesis recordings: the last active column before the stop line), at most gait.max_window_s."""
+    arrival, WalkWindow.t_arrive), at most gait.max_window_s."""
     g = cfg["gait"]
     t1 = min(float(t_end), float(t_click) + float(g["max_window_s"]))
     m = (raw_t >= t_click) & (raw_t <= t1)

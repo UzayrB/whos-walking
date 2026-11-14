@@ -67,7 +67,6 @@ import glob
 import os
 import queue
 import shutil
-import subprocess
 import sys
 import threading
 import time
@@ -164,7 +163,7 @@ class App:
         self.uz_reused = False                             # this round reuses Uzayr's walks from an earlier round
         self.uz_redo = False                               # Redo my walks was clicked in this player's game
         self.uz_held: Optional[dict] = None                # Redo my walks: his old walks (memory) till a new one
-        self.model = models.load_model(cfg, self.log)       # m1 / m2 (thesis data only); None = m0
+        self.model = models.load_model(cfg, self.log)       # m1 (thesis data only); None = m0
         if self.second_look and self.model is not None and self.model.cal2_m is None:
             self.log("second look: the model has no two-walk How sure curve (cal2_m / cal2_p, fitted separately "
                      "after training): an answer from both walks reads the one-walk curve")
@@ -1775,23 +1774,6 @@ class App:
 PORT_GLOB = "/dev/cu.usbserial-*"
 
 
-def identify_receivers() -> list[str]:
-    """Ports the thesis board identifier (development/io/RunLive/board_identify.py) reports as RECEIVER (parsed as
-    development/live/RunLive/support/rig_run.py identify() does).
-
-    Note: identify_board pulses each board's reset line once to read its boot banner.
-    """
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
-    out = subprocess.run([sys.executable, "-m", "development.io.RunLive.board_identify"], cwd=openday.CODE, env=env,
-                         capture_output=True, text=True, timeout=600).stdout
-    found = []
-    for ln in out.splitlines():
-        p = ln.split()
-        if p and p[0].startswith("/dev/") and "RECEIVER" in ln:
-            found.append(p[0])
-    return found
-
-
 def unsigned_timestamps() -> None:
     """The receiver firmware prints its 32-bit microsecond counter with %d, so after 35.8 min of uptime it reads
     negative, and the thesis recorder drops every such frame (it will not write a negative number into its
@@ -1832,9 +1814,9 @@ def csi_lines(port: str, secs: float = 1.5) -> int:
     return buf.count(b"CSI_DATA")
 
 
-def find_port(port: Optional[str], identify: bool) -> str:
+def find_port(port: Optional[str]) -> str:
     """--port wins; else the only /dev/cu.usbserial-* port; with several, the one port streaming CSI (each is
-    listened to for 1.5 s, no reset), or --identify."""
+    listened to for 1.5 s, no reset)."""
     if port:
         return port
     ports = sorted(glob.glob(PORT_GLOB))
@@ -1842,19 +1824,13 @@ def find_port(port: Optional[str], identify: bool) -> str:
         return ports[0]
     if not ports:
         raise SystemExit("No receiver found (no /dev/cu.usbserial-* port). Plug the receiver into the Mac by USB.")
-    if not identify:
-        print(f"Several boards on USB ({', '.join(ports)}): listening for the one sending CSI ...", flush=True)
-        live = [p for p in ports if csi_lines(p) >= 30]          # a receiver sends about 225 lines in 1.5 s
-        if len(live) == 1:
-            print(f"Receiver: {live[0]}", flush=True)
-            return live[0]
-        why = "none of them is sending CSI (is the TX powered?)" if not live else f"{len(live)} are sending CSI"
-        raise SystemExit(f"Several boards on USB and {why}. Unplug all but the receiver, or pass --port PORT.")
-    print("Identifying boards (each one is reset once to read its banner) ...", flush=True)
-    rx = identify_receivers()
-    if len(rx) != 1:
-        raise SystemExit(f"Expected exactly one receiver, found {rx or 'none'}. Pass --port PORT.")
-    return rx[0]
+    print(f"Several boards on USB ({', '.join(ports)}): listening for the one sending CSI ...", flush=True)
+    live = [p for p in ports if csi_lines(p) >= 30]          # a receiver sends about 225 lines in 1.5 s
+    if len(live) == 1:
+        print(f"Receiver: {live[0]}", flush=True)
+        return live[0]
+    why = "none of them is sending CSI (is the TX powered?)" if not live else f"{len(live)} are sending CSI"
+    raise SystemExit(f"Several boards on USB and {why}. Unplug all but the receiver, or pass --port PORT.")
 
 
 # -- live, replay and the key test ------------------------------------------------------------------------
@@ -1885,11 +1861,11 @@ def _say_if_no_model(cfg: dict, app: App) -> None:
               file=sys.stderr, flush=True)
 
 
-def run_live(cfg: dict, port: Optional[str], identify: bool, reset: bool, record: Optional[str],
-             fullscreen: bool = True, new_room: bool = False) -> int:
+def run_live(cfg: dict, port: Optional[str], reset: bool, record: Optional[str], fullscreen: bool = True,
+             new_room: bool = False) -> int:
     openday.use_code()                                     # first: a copy without ../Code stops here, before any
     openday.ensure_dirs()                                  # port check or window
-    p = find_port(port, identify)
+    p = find_port(port)
     rec_dir = None
     if record:
         rec_dir = os.path.join(os.path.abspath(record), time.strftime("%Y%m%d-%H%M%S"))

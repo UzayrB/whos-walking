@@ -1,7 +1,7 @@
 """Replays of thesis recordings (openday/recordings.py and app.run_replay), headless: the stitched stream is
 continuous at 150 packets a second, scripted rounds run the shipped model and leave no visitor name on disk, a
-refused step sends the replay off script; the evaluation's pass runner equals the live chain; and a round on the
-app leaves no name anywhere. Most need the thesis code and recordings (needs_code)."""
+refused step sends the replay off script; and a round on the app leaves no name anywhere. Most need the thesis code
+and recordings (needs_code)."""
 
 import json
 import os
@@ -14,7 +14,7 @@ import pytest
 import yaml
 
 import openday
-from openday import app as A, evaluate as E, recordings
+from openday import app as A, recordings
 from openday.app import NAME_ENTRY, RESULT
 
 from helpers import _app, _type, _walk, _events
@@ -214,16 +214,6 @@ def test_interleaved_enrolment_takes_turns_and_uses_fresh_walks(cfg_shipped, tmp
     assert all(d is not None for d in seen["decisions"]) and seen["kind"] == cfg["classifier"]["kind"]
     assert seen["kept"] == 2 and seen["reused"]                   # the next player reuses them ...
     assert len(seen["app"].uz_fresh) == 0                          # ... and quitting wipes them
-
-
-@pytest.mark.needs_code
-def test_stored_eval_matches_chain(cfg):
-    """The evaluation's pass runner gives the same columns as a plain Chain fed the same stream."""
-    p = recordings.passes("P3", 1, "natural", "S")[1]
-    bases = E.baselines_for(cfg, "P3", 1, [("A", 64)], 75)
-    rec = E.run_pass(cfg, "P3", 1, "natural", p, [("A", 64)], bases, 75)
-    w = E.walk_of(rec[("A", 64)], cfg)
-    assert w["seen"] and 0.5 < w["f"]["speed"] < 2.5
 
 
 # ---- privacy and the replay's own config -----------------------------------------------------------------------------

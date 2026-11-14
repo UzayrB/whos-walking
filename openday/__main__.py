@@ -1,4 +1,4 @@
-"""python -m openday {live, replay, eval, eval-pair, keytest, bench-checklist, bench-check, screens}. Run from
+"""python -m openday {live, replay, eval, keytest, bench-checklist, bench-check, screens}. Run from
 OpenDay/ with PYTHONDONTWRITEBYTECODE=1 (openday's __init__ also switches bytecode off before anything else)."""
 
 import argparse
@@ -12,8 +12,6 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="mode", required=True)
     lv = sub.add_parser("live", help="the Open Day mode, on the boards")
     lv.add_argument("--port", default=None, help="receiver port, e.g. /dev/cu.usbserial-0001")
-    lv.add_argument("--identify", action="store_true",
-                    help="several ports, none streaming: find the receiver with the thesis board identifier (pulses each board's reset once)")
     lv.add_argument("--reset", action="store_true", help="reset the receiver at start-up (off by default)")
     lv.add_argument("--record", default=None, metavar="DIR", help="BENCH ONLY: write raw CSI and events.jsonl under DIR")
     lv.add_argument("--windowed", action="store_true", help="start in a window instead of full screen")
@@ -24,15 +22,8 @@ def main(argv=None) -> int:
     rp.add_argument("--speed", type=float, default=1.0)
     rp.add_argument("--headless", action="store_true", help="no window (tests); the screen still renders off-screen")
     rp.add_argument("--fullscreen", action="store_true")
-    ev = sub.add_parser("eval", help="offline evaluation on the thesis recordings, or score a bench session")
-    ev.add_argument("--bench", default=None, metavar="DIR")
-    ev.add_argument("--no-write", action="store_true", help="do not write the fitted values into the config")
-    ep = sub.add_parser("eval-pair", help="leave two people out: compare the decision models and print the report")
-    ep.add_argument("--draws", type=int, default=50)
-    ep.add_argument("--refresh", action="store_true", help="re-run every walk through the chain (else the cache)")
-    ep.add_argument("--write", action=argparse.BooleanOptionalAction, default=False,
-                    help="also replace the shipped model (state/model) and its config lines, and save the report in "
-                         "reports/ (default: --no-write, print the report only)")
+    ev = sub.add_parser("eval", help="score a home-test (bench) recording: eval --bench DIR")
+    ev.add_argument("--bench", required=True, metavar="DIR", help="the folder live --record wrote")
     sub.add_parser("keytest", help="open the window and print every key name received")
     sub.add_parser("bench-checklist", help="print the two-person bench session protocol")
     bk = sub.add_parser("bench-check", help="walk detection on recorded runs (prints only, writes nothing)")
@@ -57,31 +48,18 @@ def main(argv=None) -> int:
     if a.mode == "bench-check":
         from openday import bench
         return bench.bench_check(cfg, a.dir, a.max_s)
-    if a.mode in ("eval-pair", "eval", "bench-check"):
-        openday.use_code()   # stop here, before any progress line, on a copy without the thesis code
-    if a.mode == "eval-pair":
-        from openday import evaluate
-        if a.refresh:
-            evaluate.load_rows(cfg, refresh=True)
-        text = evaluate.run_pair(cfg, draws=a.draws, write=a.write)
-        if not a.write:
-            print(text)
-        return 0
     if a.mode == "eval":
-        if a.bench:
-            from openday import bench
-            bench.run_bench(cfg, a.bench)
-        else:
-            from openday import evaluate
-            evaluate.run(cfg, write=not a.no_write)
+        openday.use_code()   # stop here, before any progress line, on a copy without the thesis code
+        from openday import bench
+        bench.run_bench(cfg, a.bench)
         return 0
     from openday import app
     if a.mode == "keytest":
         return app.keytest(cfg)
     if a.mode == "replay":
         return app.run_replay(cfg, a.script, speed=a.speed, headless=a.headless, fullscreen=a.fullscreen)
-    return app.run_live(cfg, port=a.port, identify=a.identify, reset=a.reset, record=a.record,
-                        fullscreen=not a.windowed, new_room=a.new_room)
+    return app.run_live(cfg, port=a.port, reset=a.reset, record=a.record, fullscreen=not a.windowed,
+                        new_room=a.new_room)
 
 
 if __name__ == "__main__":

@@ -65,7 +65,7 @@ def test_bench_report(cfg, tmp_path):
     text = open(out).read()
     first = text.splitlines()[0]
     assert ("PASS" in first or "FAIL" in first) and "of 20" in first
-    for part in ("(a) stale", "(b) alternating", "(c) Enrolment size", "(d) Do the two", "(e) Re-fitted tau"):
+    for part in ("(a) stale", "(b) alternating", "(c) Do the two"):
         assert part in text
     assert "Walk ends: as shipped" in text
     os.remove(out)

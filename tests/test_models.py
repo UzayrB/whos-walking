@@ -1,8 +1,6 @@
-"""Who walked (openday/models.py): the nearest-centre rule (m0), the trained model (eval-pair's folds, a saved
-model deciding the same after loading, the shipped model's manifest), and the learning walks' pools and the
-visitor count (no names)."""
+"""Who walked (openday/models.py): the nearest-centre rule (m0), the trained model (a saved model deciding the same
+after loading, the shipped model's manifest), and the learning walks' pools and the visitor count (no names)."""
 
-import itertools
 import json
 import os
 
@@ -48,53 +46,31 @@ def test_spread_never_tiny(cfg):
 
 # ---- the trained model -----------------------------------------------------------------------------------------------
 
-def _rows(seed=0):
-    """Synthetic walks for the six people: every name, day, block and direction, person-specific feature means."""
-    rng = np.random.default_rng(seed)
-    rows = []
-    for k, name in enumerate(openday.PEOPLE):
-        centre = rng.normal(size=len(M.ALL))
-        for day, block, d in itertools.product((1, 2), ("natural", "slow", "fast"), ("S", "N")):
-            for i in range(10 if block == "natural" else 5):
-                f = dict(zip(M.ALL, centre + 0.5 * rng.normal(size=len(M.ALL))))
-                f["speed"], f["moddepth_dop"], f["sub_dispersion"] = 1.0 + 0.05 * k + 0.03 * rng.normal(), 0.02, 1e7
-                rows.append({"name": name, "day": day, "block": block, "dir": d, "pass_id": i, "gt": 1.0, "f": f})
-    return rows
-
-
-def test_folds_never_train_on_a_test_person():
-    D = evaluate.Data(_rows())
-    for A_, B_ in itertools.combinations(openday.PEOPLE, 2):
-        for use_N in (False, True):
-            tr = evaluate.train_indices(D, (A_, B_), use_N)
-            assert len(tr) and not {A_, B_} & set(D.name[tr])
-        fold = evaluate.fit_fold(D, (A_, B_))
-        assert A_ not in fold["_train_people"] and B_ not in fold["_train_people"]
-        assert len(fold["_train_people"]) == 4
-
-
 def test_saved_model_gives_identical_decisions(tmp_path):
-    D = evaluate.Data(_rows(1))
-    names = evaluate.CORE
-    X = D.X[:, [M.ALL.index(n) for n in names]]
-    rng = np.random.default_rng(2)
-    pools = {"uzayr": [D.rows[i]["f"] for i in range(3)], "visitor": [D.rows[i]["f"] for i in range(200, 203)]}
-    for m in (evaluate.fit_m1(X, D.name, names), evaluate.fit_m1(X, D.name, names, keep=3),
-              evaluate.fit_m2(X, D.name, D.rec, names)):
-        m.tau, m.plda = 0.0836, m.kind == "m1"
-        p = str(tmp_path / f"{m.kind}.json")
-        m.save(p)
-        back = M.Model.load(p)
-        for i in rng.choice(len(D.rows), 25, replace=False):
-            a, b = M.decide(m, D.rows[i]["f"], pools), M.decide(back, D.rows[i]["f"], pools)
-            assert (a.label, a.not_sure, a.why) == (b.label, b.not_sure, b.why) and a.margin == b.margin
-
-
-def test_the_manifest_code_files_exist():
-    """eval-pair --write dates these files in the model's manifest: each must exist, or the write would fail."""
-    assert evaluate.CODE_FILES
-    for f in evaluate.CODE_FILES:
-        assert os.path.isfile(os.path.join(openday.OPENDAY, "openday", f)), f
+    """A trained model (m1, here made up) saved and loaded again decides every walk exactly as before. A model file
+    with an option this app no longer has (m2, PLDA, session centring) is not loaded: the app says so and uses m0."""
+    rng = np.random.default_rng(1)
+    walks_ = []
+    for _ in range(30):
+        f = dict(zip(M.ALL, rng.normal(size=len(M.ALL))))
+        f.update(speed=1.0 + 0.1 * rng.normal(), moddepth_dop=0.02, sub_dispersion=1e7, moddepth_dop10=0.01)
+        walks_.append(f)
+    mu, sd = evaluate.fit_standard(np.array([M.vec(f, M.ALL) for f in walks_]))
+    m = M.Model("m1", list(M.ALL), mu, sd, tau=0.0836, P=rng.normal(size=(len(M.ALL), len(M.ALL))),
+                lam=rng.random(len(M.ALL)))
+    p = str(tmp_path / "m1.json")
+    m.save(p)
+    back = M.Model.load(p)
+    pools = {"uzayr": walks_[:3], "visitor": walks_[3:6]}
+    for f in walks_[6:]:
+        a, b = M.decide(m, f, pools), M.decide(back, f, pools)
+        assert (a.label, a.not_sure, a.why) == (b.label, b.not_sure, b.why) and a.margin == b.margin
+    cfg = {"classifier": {"kind": "m1", "model_path": p, "model_tau": 0.1}}
+    for old in ({"plda": True}, {"session_centre": True}, {"kind": "m2"}):
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(dict(m.to_json(), **old), f)
+        logs: list = []
+        assert M.load_model(cfg, logs.append) is None and "using m0" in logs[0], old
 
 
 @pytest.mark.needs_code
