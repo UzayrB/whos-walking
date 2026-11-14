@@ -2,8 +2,8 @@
 into one continuous RX2 stream, the replay playlists, and the stand-in serial port that feeds the stream in.
 
 This file, in order:
-  1. The thesis recordings, by participant code: stem (with the laptop-only model manifest in state/model, the
-     only places a code becomes a name), load_rx2, load_gt, passes, gt_speed, segment.
+  1. The thesis recordings, by participant code: stem (the only place a code becomes a name), load_rx2, load_gt,
+     passes, gt_speed, segment.
   2. Stitching one stream from many pieces: Stitcher, IdleSource (empty-room frames for the gaps), walk_piece.
   3. Playlists (scripts/*.yaml): Plan and build_plan.
   4. The stand-in serial port: Replay plays the stream to the thesis recorder and types the operator's keys.
@@ -35,9 +35,8 @@ import openday
 
 
 def stem(code: str, day: int, block: str) -> str:
-    """A recording's file name without its ending. stem and the model manifest (state/model, laptop only) are the
-    only places a participant code becomes the first name the thesis filed the recording under
-    (openday.recording_name, from the laptop-only configs/people.local.yaml)."""
+    """A recording's file name without its ending. The only place a participant code becomes the first name the
+    thesis filed the recording under (openday.recording_name, from the laptop-only configs/people.local.yaml)."""
     return f"participant_{openday.recording_name(code)}_idpath_d{int(day)}_{block}"
 
 

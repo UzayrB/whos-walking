@@ -82,7 +82,7 @@ def test_shipped_model_is_thesis_only_and_loads(cfg_shipped):
     m = M.Model.load(os.path.join(openday.OPENDAY, c["model_path"]))
     assert m.kind == c["kind"] and len(m.names) == len(m.mu) == len(m.sd)
     man = json.load(open(os.path.join(openday.OPENDAY, "state", "model", "manifest.json")))
-    assert set(man["trained_on"]["people"]) == {openday.recording_name(p) for p in openday.PEOPLE}
+    assert set(man["trained_on"]["people"]) == set(openday.PEOPLE)            # codes only, never names
     bad = openday._people().get("excluded", [])                         # recorded but never used
     assert not any(x in f for x in bad for f in man["trained_on"]["files"])
     # (9 Nov retrain: Room A walks of the same six people, all three receivers, join the spread; was RX2 only)
