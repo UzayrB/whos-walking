@@ -1,7 +1,8 @@
 """The signal chain (openday/chain.py): a synthetic Doppler tone reads as the right speed, the live bins, the
-gain-invariant normalisation, live and offline batches giving the same columns, the receiver's clock, the room
-measurement with someone moving in it; then the 3D picture's movement bars on their own (the Ridge class): frequency
-order, one ridge per waterfall column, where the signal wobbles."""
+gain-invariant normalisation, live and offline batches giving the same columns, the receiver's clock, the front end
+(dsp.resample packets or grid) and the raw ring whatever the batches, the room measurement with someone moving in
+it; then the 3D picture's movement bars on their own (the Ridge class): frequency order, one ridge per waterfall
+column, where the signal wobbles."""
 
 import copy
 import json
@@ -60,8 +61,10 @@ def test_normalisation_is_gain_invariant(cfg):
 
 
 @pytest.mark.needs_code
-def test_batch_size_does_not_change_columns(cfg):
+@pytest.mark.parametrize("resample", ["packets", "grid"])
+def test_batch_size_does_not_change_columns(cfg, resample):
     """Offline (big batches) equals live (small batches): the chain is causal and incremental."""
+    cfg["dsp"]["resample"] = resample
     fr = recordings.segment(recordings.load_rx2("P4", 1, "natural"), *(lambda a: (a[0] - 3, a[-1] + 1))(
         recordings.passes("P4", 1, "natural", "S")[0]["anchor_times"]))
     outs = []
@@ -82,6 +85,106 @@ def test_device_clock_unwraps_and_restarts(cfg):
     _t, _tm, restarted = c.push(np.array([500_000_000, 500_007_000]), np.array([51.0, 51.007]))
     _t, _tm, restarted = c.push(np.array([12_000, 19_000]), np.array([51.1, 51.107]))   # board rebooted
     assert restarted and c.wraps == 0
+
+
+# ---- dsp.resample: packets (each packet a sample, from 16 Nov) or grid (the 150 Hz grid, as before) ----------------
+
+def _stream(seed=4, n=900):
+    """Packet times 6 or 7 ms apart (about 150 a second), a lost packet here and there and one 80 ms hole (longer
+    than dsp.gap_s); amplitudes (n, 103) with a few spikes for the Hampel."""
+    rng = np.random.default_rng(seed)
+    dt = rng.choice([0.006, 0.007], n) + rng.normal(0.0, 2e-4, n)
+    dt[rng.choice(n, 25, replace=False)] *= 2.0
+    dt[400] = 0.08
+    a = 1.0 + 0.1 * rng.standard_normal((n, 103))
+    a[rng.choice(n, 10, replace=False)] *= 3.0
+    return 10.0 + np.cumsum(dt), a.astype(np.float32)
+
+
+def _hampel_reference(k, x, g, cfg):
+    """The centred Hampel in one batch (half a window lost at each end)."""
+    d = cfg["dsp"]
+    h = int(d["hampel_window"]) // 2
+    win = np.lib.stride_tricks.sliding_window_view(x, 2 * h + 1, axis=0)
+    med = np.median(win, axis=-1)
+    mad = float(d["hampel_mad_scale"]) * np.median(np.abs(win - med[..., None]), axis=-1)
+    c = x[h:len(x) - h]
+    return k[h:len(k) - h], np.where(np.abs(c - med) > float(d["hampel_sigmas"]) * mad, med, c), g[h:len(g) - h]
+
+
+def _packets_reference(t, a, cfg):
+    """dsp.resample packets in one batch, written out plainly (the 15 Nov study's reference, flib.front with rs
+    packets and ma 2): a step dT leaves rint(dT fs) - 1 lost places, each filled linearly at its own time (a gap
+    when dT > gap_s); k = the running maximum of rint(time fs); each sample the mean of itself and the one before."""
+    fs, gap_s = float(cfg["radio"]["fs_hz"]), float(cfg["dsp"]["gap_s"])
+    a = a.astype(float)
+    xs, ts, gs = [a[0]], [t[0]], [False]
+    for j in range(1, len(t)):
+        dT = t[j] - t[j - 1]
+        n = max(int(np.rint(dT * fs)) - 1, 0)
+        for i in range(1, n + 1):
+            w = i / (n + 1.0)
+            xs.append(a[j - 1] * (1 - w) + a[j] * w)
+            ts.append(t[j - 1] + w * dT)
+            gs.append(dT > gap_s)
+        xs.append(a[j])
+        ts.append(t[j])
+        gs.append(False)
+    x = np.array(xs)
+    x = 0.5 * (x + np.concatenate((x[:1], x[:-1])))
+    return _hampel_reference(np.maximum.accumulate(np.rint(np.array(ts) * fs).astype(np.int64)), x, np.array(gs), cfg)
+
+
+def _grid_reference(t, a, cfg):
+    """dsp.resample grid (as before 16 Nov) in one batch: linear resampling onto the 150 Hz grid, then the Hampel."""
+    fs = float(cfg["radio"]["fs_hz"])
+    k = np.arange(int(np.ceil(t[0] * fs)), int(np.floor(t[-1] * fs)) + 1, dtype=np.int64)
+    g = k / fs
+    i = np.clip(np.searchsorted(t, g, side="right") - 1, 0, len(t) - 2)
+    w = ((g - t[i]) / (t[i + 1] - t[i]))[:, None]
+    return _hampel_reference(k, a[i] * (1.0 - w) + a[i + 1] * w, t[i + 1] - t[i] > float(cfg["dsp"]["gap_s"]), cfg)
+
+
+def _front(cfg, t, a, seed):
+    """FrontEnd fed 1 to 29 packets at a time: (grid indices, samples before the high-pass, gap flags)."""
+    rng, fe, out, i = np.random.default_rng(seed), chain.FrontEnd(cfg), [], 0
+    while i < len(t):
+        b = int(rng.integers(1, 30))
+        _k, _y, g, restarted = fe.push(t[i:i + b], a[i:i + b])
+        assert not restarted
+        if len(g):
+            out.append((fe.raw_out[0], fe.raw_out[1], g))
+        i += b
+    return tuple(np.concatenate([o[j] for o in out]) for j in range(3))
+
+
+@pytest.mark.parametrize("resample", ["packets", "grid", None])
+def test_the_front_end_whatever_the_batches(cfg, resample):
+    """dsp.resample packets: fed 1 to 29 packets at a time, the live front end gives exactly the plain one-batch
+    reference (lost places filled, two samples may share a grid index, each sample the mean with the one before).
+    grid, or a config without the switch: exactly the 150 Hz grid as before 16 Nov."""
+    if resample is None:
+        del cfg["dsp"]["resample"]
+    else:
+        cfg["dsp"]["resample"] = resample
+    t, a = _stream()
+    k0, x0, g0 = (_packets_reference if resample == "packets" else _grid_reference)(t, a, cfg)
+    assert g0.any() and (np.any(np.diff(k0) == 0) if resample == "packets" else np.all(np.diff(k0) == 1))
+    for seed in (1, 2, 3):
+        k, x, g = _front(cfg, t, a, seed)
+        assert np.array_equal(k, k0) and np.array_equal(g, g0)
+        np.testing.assert_allclose(x, x0, rtol=0.0, atol=1e-12)
+
+
+def test_the_raw_ring_keeps_a_shared_grid_index_and_restarts_when_it_goes_back():
+    """With dsp.resample packets two samples can share a grid index, also across two batches: the ring carries on.
+    An index that goes back is a restart."""
+    r = chain.RawRing(150.0, 10.0)
+    r.push(np.array([1, 2, 3]), np.ones((3, 2)))
+    r.push(np.array([3, 4]), np.ones((2, 2)))
+    assert r.count == 5 and np.array_equal(r.window(0.0, 1.0)[0] * 150.0, [1, 2, 3, 3, 4])
+    r.push(np.array([2, 3]), np.ones((2, 2)))
+    assert r.count == 2
 
 
 # ---- the room measurement (Measure room): someone moving while it measures ------------------------------------------

@@ -744,21 +744,19 @@ def test_every_screen_fits(cfg_shipped, tmp_path):
     assert not found, "\n" + overlap.fmt(found)
 
 
-def _answer(a, why, sure):
-    S.walk(a, (1.13, 121, 2.4, 0.41), decision=S._dec("visitor", 0.15, {"speed": -0.45, "steps": -0.2,
-                                                                        "swing": -0.35, "bounce": -0.1}, why))
+def _answer(a, why, margin):
+    S.walk(a, (1.13, 121, 2.4, 0.41), decision=S._dec("visitor", margin, {"speed": -0.45, "steps": -0.2,
+                                                                           "swing": -0.35, "bounce": -0.1}, why))
     a._timers(a.timer + 0.01)
     assert a.state == RESULT
-    if a.model is not None:
-        a.model.how_sure = lambda m: sure
 
 
 @pytest.mark.usefixtures("_start_clear_of_the_lock")
 @pytest.mark.parametrize("record", [False, True])
 def test_long_names_and_extremes_fit(cfg_shipped, tmp_path, record):
-    """A 16-letter name (the longest the name box takes) through a whole round, the longest "Told apart by", How
-    sure 100 %, every tile at its extreme (bounce 100 %), Details on, the End game, Quit and name boxes over a
-    game, and a running walker's speed line (4.3 m/s)."""
+    """A 16-letter name (the longest the name box takes) through a whole round, the longest "Told apart by", the
+    longest How sure ("Fairly sure"), every tile at its extreme (bounce 100 %, echo 99 dB), Details on, the End
+    game, Quit and name boxes over a game, and a running walker's speed line (4.3 m/s)."""
     found: list = []
     sh = _Check(cfg_shipped, tmp_path, found)
     try:
@@ -775,10 +773,11 @@ def test_long_names_and_extremes_fit(cfg_shipped, tmp_path, record):
             sh.shot(a, f"{name}: got it", now=time.monotonic())
             S.learn(a)
             _answer(a, ["movement strength", "stride rhythm"], 1.0)
+            assert a.view(time.monotonic())["card"]["conf_text"] == "How sure: Fairly sure"
             sh.shot(a, f"{name}: answer, longest why")
-            a.last["f"] = dict(a.last["f"], speed=9.99, steps=199.0, swing=9.9, bounce=1.0)
+            a.last["f"] = dict(a.last["f"], speed=9.99, echo=99.0, swing=9.9, bounce=1.0)
             for w in a.visitor.walks:
-                w["f"] = dict(w["f"], speed=9.99, steps=199.0, swing=9.9, bounce=1.0)
+                w["f"] = dict(w["f"], speed=9.99, echo=99.0, swing=9.9, bounce=1.0)
             sh.shot(a, f"{name}: tiles at their extremes")
             for keys, what in ((["ctrl+n"], "End game box"), (["ctrl+q"], "Quit box"),
                                (["n"] + list(name), "name box over a game")):
@@ -873,7 +872,7 @@ def test_the_card_and_the_tiles_stay_readable(cfg_shipped, tmp_path):
                 if size == "MacBook" and name in ("Lerato", "Thandiwe Mokoena"):
                     full, short = 15 * h / screen.BASE_H, name.split()[0]
                     pulls = [t["pull"] for t in sc.tiles.values() if t["pull"].get_text()]
-                    assert len(pulls) == 4 and all(p.get_text() == f"like {short}" for p in pulls)
+                    assert len(pulls) == 3 and all(p.get_text() == f"like {short}" for p in pulls)   # (Echo: none)
                     floor = 0.8 if short == "Lerato" else 0.65
                     assert min(p.get_fontsize() for p in pulls) >= floor * full, [p.get_fontsize() for p in pulls]
             _look(c, f"{name}: answer", time.monotonic() + S.LATER, found)

@@ -2,7 +2,7 @@
 # Lines marked "fitted" were fitted on the six thesis participants' recordings (28 Oct; the model's lines 12-13 Nov).
 
 radio:
-  fs_hz: 150.0                 # uniform resampling grid (TX rate)
+  fs_hz: 150.0                 # the packet rate and the 150 Hz grid (TX rate)
   wavelength_m: 0.12177        # channel 11, 2462 MHz
   bistatic_factor: 0.937       # fitted (about 1 for TX and RX side by side)
   # speed v = f * wavelength / (2 * bistatic_factor); at F = 1 that is f * 0.0609 m/s per Hz
@@ -20,7 +20,12 @@ clock:
   offset_blocks: 6             # ... over this many blocks (30 s)
 
 dsp:
-  gap_s: 0.05                  # resampled samples bridging a longer packet gap are marked as gaps
+  resample: packets            # packets (from 16 Nov): no resampling, each packet a sample (its mean with the one
+                               # before), lost packets filled from their neighbours; with the model trained that way
+                               # (classifier.model_path). grid: the 150 Hz grid and the model before 16 Nov
+                               # (grid_model_path), exactly as before (README section 6, "If the new cleaning
+                               # misbehaves")
+  gap_s: 0.05                  # samples bridging a longer packet gap are marked as gaps
   restart_gap_s: 1.0           # a longer silence restarts the chain (filters re-warm)
   tick_batch: 8                # run the chain in tick once this many packets are waiting ...
   tick_max_wait_s: 0.1         # ... or the oldest has waited this long
@@ -77,21 +82,21 @@ gait:                          # the thesis's single-link gait features (openday
 
 classifier:
   kind: m1                     # m1: the trained model (model_path); m0: the nearest-centre rule (no model needed)
-  model_path: state/model/model.json   # m1: the trained model, fitted on the six thesis people only (laptop only)
-  model_tau: 0.1094            # fitted, m1: a margin below this is a close call: the answer still names the nearer
-                               # person (with second_look: after one more walk), and the log counts it; about 15 % of
-                               # live test decisions fall below it
+  model_path: state/model/model.json   # m1: the trained model, fitted on the six thesis people only (laptop only),
+                               # through dsp.resample packets
+  model_tau: 0.046             # m1: a margin below this is a close call: the answer still names the nearer person
+                               # (with second_look: after one more walk), and the log counts it; set so that about 15 %
+                               # of the home tests' decisions fall below it. How sure: "Leaning" from it, "Fairly sure"
+                               # from 4 times it
+  grid_model_path: state/model_grid/model.json   # dsp.resample grid: the model before 16 Nov ...
+  grid_model_tau: 0.1094       # ... and its close-call line
   second_look: true            # a GAME walk below the close-call line (model_tau; m0: tau) names nobody yet: the card
                                # says "Walk once more!" (too close to call) and the same walker walks again; the answer
                                # is then decided on both walks (their readings averaged) and says "(from both walks)".
                                # At most one extra walk per game walk; if the second walk is missed, the first walk
-                               # alone decides. Its "How sure" reads a two-walk curve (cal2_m / cal2_p) that is NOT
-                               # part of training: training_home/fit_cal2.py fits it separately and adds it to the
-                               # model file (laptop only). A retrained model has none until it is refitted: it then
-                               # reads the one-walk curve (the run log says so at start). Thesis people, leave two
-                               # out, the installed model: about 16 % of game walks, +2.5 points (89.5 -> 92 %)
+                               # alone decides. Home tests: about 1 game walk in 7, +1.5 to 2.5 points
                                # false = one walk per answer, as before
-  use: [speed, steps, swing, bounce]   # m0: features the decision uses (the tiles always show all four)
+  use: [speed, steps, swing, bounce]   # m0: features the decision uses
   tau: 0.08                    # fitted, m0 only (no trained model): a margin below this is a close call
                                # (logged; the answer still names the nearer person)
   prior_sd:                    # fitted, m0 only: floor on each feature's spread
@@ -105,14 +110,14 @@ pools:
   n_visitor: 5                 # the most learning walks the visitor's pool keeps (at least n_enrol)
   n_enrol: 2                   # learning walks per visitor (2 each cost about 2-3 points against 3, ~45 s quicker)
   n_enrol_uzayr: 5             # Uzayr's own learning walks (at most n_uzayr; the same as n_enrol: as before). His walks
-                               # are kept and reused (uzayr_reuse_min), so 5 cost time only once every 25 minutes
+                               # are kept and reused (uzayr_reuse_min), so 5 cost time only once every 10 minutes
   enrol_order: visitor_first   # visitor_first (the visitor walks n_enrol times, then Uzayr) or alternate (Uzayr
                                # first, then taking turns: U, V, U, V)
-  uzayr_reuse_min: 25          # Uzayr's learning walks are kept (memory only) and reused for the next player while
+  uzayr_reuse_min: 10          # Uzayr's learning walks are kept (memory only) and reused for the next player while
                                # all are younger than this when New player is clicked AND were taken after the
                                # current room measurement in this app run; else he walks again after the visitor.
-                               # 0 = never: he walks every round. With 25 a game decides on walks up to about
-                               # 28-30 min old (no ageing was seen within a run); worst case about 3-4 points lower.
+                               # 0 = never: he walks every round. 10 (was 25): a precaution: the two-person home
+                               # tests only cover walks up to about 10 min old
                                # Their age is on Uzayr's line between walks ("Uzayr's walks: 6 min old.")
 
 baseline:
@@ -161,7 +166,7 @@ ui:
   line_smooth: 5               # display only: running median of the body-speed line, in columns
   tile_ranges:                 # the tiles' comparison bars run from the first value to the second
     speed: [0.0, 2.5]
-    steps: [60.0, 160.0]
+    echo: [5.0, 35.0]          # dB: the walk's loudest moment over the room's level (display only)
     swing: [1.0, 4.0]
     bounce: [0.0, 0.8]
   reading_s: 0.7

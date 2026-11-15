@@ -42,6 +42,7 @@ from openday.app import App, RunLog, AGAIN, BUSY, DECIDING, ENROL_UZAYR, ENROL_V
 NAME = "Lerato"                                            # the demo visitor (not a real visitor)
 NAME2 = "Sipho"                                            # the next demo player (Uzayr's walks reused)
 DPI = 120                                                  # the 16 x 9 in figure -> 1920 x 1080
+PNG = {"optimize": True}                                   # (smaller files; the same pixels)
 LATER = 30.0                                               # "clean" shots render this long after the action
 # per-person walks (speed m/s, steps/min, leg swing f90/f50, bounce): Lerato walks faster, with more swing
 UZAYR = [(0.84, 106, 1.9, 0.28), (0.88, 110, 1.8, 0.31), (0.86, 108, 2.0, 0.30)]
@@ -55,8 +56,7 @@ def _dec(label: str, margin: float, contrib: dict, why: list, not_sure: bool = F
 
 ANSWER_V = _dec("visitor", 0.15, {"speed": -0.45, "steps": -0.15, "swing": -0.35, "bounce": -0.02},
                 ["speed", "leg swing"])
-ANSWER_U = _dec("uzayr", 0.12, {"speed": 0.40, "steps": 0.25, "swing": 0.03, "bounce": 0.08},
-                ["speed", "step rate"])
+ANSWER_U = _dec("uzayr", 0.12, {"speed": 0.40, "swing": 0.10}, ["speed", "leg swing"])
 # a close call (margin below tau): the app still names the nearer person, less sure
 CLOSE = _dec("uzayr", 0.03, {"speed": 0.06, "steps": 0.02, "swing": 0.01, "bounce": 0.0}, ["speed"], not_sure=True)
 # the second look (classifier.second_look): a close call on Lerato's walk, then her answer from both walks
@@ -136,7 +136,7 @@ class _Shots:
         signal(a, silent=silent)
         a.screen.render(a.view(now))
         path = os.path.join(self.out, name + ".png")
-        a.screen.fig.savefig(path, dpi=self.dpi, facecolor=screen.BG)
+        a.screen.fig.savefig(path, dpi=self.dpi, facecolor=screen.BG, pil_kwargs=PNG)
         self.files.append(path)
         return path
 
@@ -317,7 +317,7 @@ def _montage(files: list, captions: list, path: str, cols: int = 4) -> None:
         ax.imshow(imread(f), interpolation="antialiased")
         ax.set_axis_off()
         fig.text(x / width_in, (y + ph + 0.08) / height, c, color=screen.INK, fontsize=17, va="bottom")
-    fig.savefig(path, facecolor=screen.BG)
+    fig.savefig(path, facecolor=screen.BG, pil_kwargs=PNG)
 
 
 def _lights(sh: _Shots, path: str) -> None:

@@ -326,6 +326,22 @@ def test_pulls_only_with_the_answer(cfg, tmp_path):
 
 
 @pytest.mark.alternate_round
+def test_the_echo_tile_shows_how_strongly_the_walk_stirred_the_signal(cfg, tmp_path):
+    """The Echo tile, in the old Steps tile's place (display only): the walk's loudest smoothed energy over the
+    room's level, in dB, the last walk against Uzayr's average and the visitor's; no "like ..." (no model reads it)."""
+    app = _app(cfg, tmp_path)
+    t = _to_game(app)
+    _walk(app, t)
+    app.state = RESULT
+    tl = app.view(time.monotonic())["tiles"]
+    assert list(tl) == ["speed", "echo", "swing", "bounce"]
+    e = 10 * np.log10(30.0)                                        # (the walk: 30 x the room's level, e0 = 1)
+    assert app.last["f"]["echo"] == pytest.approx(e)
+    assert (tl["echo"]["label"], tl["echo"]["value"]) == ("Echo", f"{e:.0f} dB") and "pull" not in tl["echo"]
+    assert [r[:2] for r in tl["echo"]["bars"]] == [("Last walk", f"{e:.0f}"), ("Uzayr", f"{e:.0f}"), ("Le", f"{e:.0f}")]
+
+
+@pytest.mark.alternate_round
 def test_learning_hint_on_uzayrs_own_turn(cfg, tmp_path):
     app = _app(cfg, tmp_path)
     _type(app, ["n", "L", "e", "enter"])
@@ -661,14 +677,27 @@ def test_a_room_measurement_someone_moved_in_is_not_called_busy(cfg, tmp_path):
 
 
 @pytest.mark.alternate_round
-def test_a_room_measurement_saved_by_the_older_app_is_offered(cfg, tmp_path):
-    """state/baseline_live.json as the app wrote it before disturbed and d existed: loaded at start-up as a still
-    room's measurement and offered by Use last measurement."""
+@pytest.mark.parametrize("resample", ["grid", "packets"])
+def test_a_room_measurement_saved_by_the_older_app_is_offered(cfg, tmp_path, resample):
+    """state/baseline_live.json as the app wrote it before disturbed, d and resample existed (measured through the
+    150 Hz grid): with dsp.resample grid loaded at start-up as a still room's measurement and offered by Use last
+    measurement; with packets not offered (a level measured through the other front end does not fit), and the
+    other way round."""
+    cfg["dsp"]["resample"] = resample
     n = int(cfg["dsp"]["nfft"]) // 2 + 1
     with open(tmp_path / "baseline_live.json", "w", encoding="utf-8") as f:
         json.dump({"floor": [1.0] * n, "e0": 0.7, "n_cols": 187, "variant": cfg["dsp"]["variant"],
                    "nfft": int(cfg["dsp"]["nfft"]), "created": time.time() - 120}, f)
     app = App(cfg, state_dir=str(tmp_path), log=RunLog(None), headless=True)
+    if resample == "packets":
+        assert app.cached is None and "reuse_baseline" not in app.view(time.monotonic())["buttons"]
+        b = chain.Baseline(np.ones(n), 0.7, 187, cfg["dsp"]["variant"], int(cfg["dsp"]["nfft"]), time.time() - 120,
+                           resample="packets")
+        (tmp_path / "baseline_live.json").write_text(json.dumps(b.to_json()))
+        assert App(cfg, state_dir=str(tmp_path), log=RunLog(None), headless=True).cached is not None
+        cfg["dsp"]["resample"] = "grid"
+        assert App(cfg, state_dir=str(tmp_path), log=RunLog(None), headless=True).cached is None
+        return
     b = app.cached
     assert b is not None and b.e0 == 0.7 and not b.disturbed and b.d == 0.0
     _type(app, [app.view(time.monotonic())["buttons"]["reuse_baseline"]["key"]])
@@ -1067,7 +1096,7 @@ def _more(left):
 def test_shipped_round_is_two_each_visitor_first(cfg):
     assert (cfg["pools"]["n_enrol"], cfg["pools"]["enrol_order"]) == (2, "visitor_first")
     assert cfg["pools"]["n_enrol_uzayr"] == 5 <= cfg["pools"]["n_uzayr"]   # his own walks: kept, so more of them
-    assert cfg["pools"]["uzayr_reuse_min"] == 25                   # (the age study)
+    assert cfg["pools"]["uzayr_reuse_min"] == 10                   # (15 Nov: his walks drift within a run)
     assert cfg["classifier"]["second_look"] is True
 
 
@@ -2131,8 +2160,8 @@ def test_a_close_call_walks_once_more_and_answers_from_both_walks(cfg, tmp_path)
     """A game walk below tau names nobody: "Walk once more!" ("Too close to call: the same walker again."), Start
     walk is the next step (Undo walk can throw it away; no It was ..., no Redo my walks). The second walk's answer is
     decided on the average of both walks' readings ("Comparing both walks ..." while it thinks) and says "(from both
-    walks)", How sure from the model's two-walk curve (the one-walk curve when the model file has none); the tiles
-    show the readings it was decided on, "Both walks". The recording links the two walks, an It was ... click labels
+    walks)", How sure in words from its margin, as for one walk; the tiles show the readings it was decided on
+    (the Echo tile too), "Both walks". The recording links the two walks, an It was ... click labels
     both, and the bench tools rebuild it."""
     log = tmp_path / "run.log"
     app = _app(cfg, tmp_path, record=True, log=str(log))
@@ -2160,7 +2189,7 @@ def test_a_close_call_walks_once_more_and_answers_from_both_walks(cfg, tmp_path)
     assert asked[-1]["speed"] == pytest.approx((first["f"]["speed"] + second["f"]["speed"]) / 2)
     vm = _now(app)
     assert vm["card"]["sub"] == "Comparing both walks with Uzayr's and Le's"
-    for n in ("speed", "steps"):                                   # the tiles: what the answer is decided on
+    for n in ("speed", "echo", "swing"):                           # the tiles: what the answer is decided on
         assert vm["tiles"][n]["bars"][0][0] == "Both walks"
         assert vm["tiles"][n]["value"] == TILE_FMT[n].format(both[n])
     assert vm["tiles"]["speed"]["value"] != TILE_FMT["speed"].format(second["f"]["speed"])
@@ -2171,17 +2200,15 @@ def test_a_close_call_walks_once_more_and_answers_from_both_walks(cfg, tmp_path)
     assert card["big"] == "Le" and card["sub"] == "(from both walks)"
     assert vm["tiles"]["speed"]["bars"][0][:2] == ("Both walks", f"{both['speed']:.2f}")   # (and "like ..." for it)
     assert vm["tiles"]["speed"]["value"] == TILE_FMT["speed"].format(both["speed"]) and "pull" in vm["tiles"]["speed"]
-    if app.model is None:                                          # m0 (no model file here): the margin
-        assert card["conf"] == pytest.approx(0.25) and card["conf_text"] == "How sure: 25%"
-    # How sure from both walks: the model's two-walk curve, here synthetic so it differs from the one-walk one
+    tau = app.model.tau if app.model is not None else float(cfg["classifier"]["tau"])   # (m0 without a model file)
+    assert card["conf_text"] == "How sure: " + models.sure_words(0.25, tau)
+    # How sure from both walks: words from the margin 0.25 against tau, as for one walk (no curve, no number)
     app.model = app.model or models.Model("m1", ["speed"], np.zeros(1), np.ones(1))
-    app.model.cal_m, app.model.cal_p = np.array([0.0, 0.5]), np.array([0.5, 1.0])      # one walk at 0.25: 75 %
-    app.model.cal2_m, app.model.cal2_p = np.array([0.0, 0.5]), np.array([0.6, 0.8])    # both walks at 0.25: 70 %
-    card = _now(app)["card"]
-    assert card["conf"] == pytest.approx(0.70) and card["conf_text"] == "How sure: 70%"
-    app.model.cal2_m = app.model.cal2_p = None                     # a model file without one: the one-walk curve
-    card = _now(app)["card"]
-    assert card["conf"] == pytest.approx(0.75) and card["conf_text"] == "How sure: 75%"
+    for tau, words, bar in ((0.05, "Fairly sure", 1.0), (0.1, "Leaning", 2 / 3), (0.3, "Close call", 1 / 3)):
+        app.model.tau = tau
+        card = _now(app)["card"]
+        assert card["conf_text"] == f"How sure: {words}" and card["conf"] == pytest.approx(bar)
+        assert "%" not in "".join(_cards(_now(app)))
     assert _now(app)["buttons"]["confirm_visitor"]["look"] == "on"
     ev = [e for e in _events(tmp_path) if e["kind"] == "walk"][-1]
     assert ev["second_of"] == first["id"] and ev["decision"]["both"] is True and ev["alone"]["label"] == "visitor"
@@ -2489,26 +2516,25 @@ def test_a_second_look_started_while_thinking_is_still_the_second_look(cfg, tmp_
 
 
 @pytest.mark.shipped
-@pytest.mark.parametrize("curve, on, said", [(False, True, True), (True, True, False), (False, False, False)])
-def test_the_run_log_says_once_when_the_model_has_no_two_walk_curve(cfg, tmp_path, curve, on, said):
-    """The two-walk How sure curve is fitted separately, after training: with the second look on and a model file
-    without one (a retrained model before it is refitted), the run log says once, at start, that an answer from
-    both walks reads the one-walk curve."""
-    m = models.Model("m1", ["speed"], np.zeros(1), np.ones(1), P=np.eye(1), lam=np.ones(1),
-                     cal_m=np.array([0.0, 0.4]), cal_p=np.array([0.55, 0.95]))
+@pytest.mark.parametrize("curve", [False, True])
+def test_a_model_without_a_how_sure_curve_plays_the_same(cfg, tmp_path, curve):
+    """How sure is words from the margin (no curve is read): a model file with or without its How sure curves (a
+    newly trained one has none) loads and plays a close call the same, and the run log no longer mentions a
+    curve."""
+    m = models.Model("m1", ["speed"], np.zeros(1), np.ones(1), P=np.eye(1), lam=np.ones(1))
     if curve:
+        m.cal_m, m.cal_p = np.array([0.0, 0.4]), np.array([0.55, 0.95])
         m.cal2_m, m.cal2_p = np.array([0.0, 0.4]), np.array([0.5, 0.9])
     path = tmp_path / "model.json"
     m.save(str(path))
-    cfg["classifier"].update(kind="m1", model_path=str(path), second_look=on)
+    cfg["classifier"].update(kind="m1", model_path=str(path), second_look=True)
+    cfg["dsp"]["resample"] = "packets"                             # (the model_path model)
     log = tmp_path / "run.log"
     app = _app(cfg, tmp_path, log=str(log))
-    assert app.model is not None and (app.model.cal2_m is not None) == curve
-    if on:                                                         # (a close call: still said only once)
-        _to_close_call(app)
+    assert app.model is not None and app.model.tau == pytest.approx(cfg["classifier"]["model_tau"])
+    _to_close_call(app)
     app.close()
-    said_n = log.read_text().count("second look: the model has no two-walk How sure curve")
-    assert said_n == (1 if said else 0)
+    assert "curve" not in log.read_text()
 
 
 @pytest.mark.shipped
@@ -2534,7 +2560,7 @@ def test_redo_card_counts_down_his_five_walks(cfg, tmp_path, player):
 
 @pytest.mark.shipped
 def test_his_five_walks_are_reused_and_redone(cfg, tmp_path):
-    """pools.n_enrol_uzayr 5: his five walks are kept and reused by the next player within 25 minutes (only the
+    """pools.n_enrol_uzayr 5: his five walks are kept and reused by the next player within 10 minutes (only the
     visitor walks), a whole set is needed (four do not count), and Redo my walks takes five again."""
     assert _nu(cfg) == 5
     app = _app(cfg, tmp_path, record=True)
@@ -2542,7 +2568,7 @@ def test_his_five_walks_are_reused_and_redone(cfg, tmp_path):
     t, who = _learn(app, 100.0)
     assert who == ["visitor"] * 2 + ["uzayr"] * 5 and len(app.uz_fresh) == 5
     t = _game(app, t)
-    _age(app, 24.0)
+    _age(app, float(cfg["pools"]["uzayr_reuse_min"]) - 1.0)
     _player(app, "Si")
     assert app.uz_reused and len(app.uz_fresh) == 5
     t, who = _learn(app, t)

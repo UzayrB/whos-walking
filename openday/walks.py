@@ -2,7 +2,7 @@
 
 This file, in order:
   1. WalkWindow: collects one walk's columns from the click and decides when the walk ended.
-  2. The four numbers the screen shows: step_rate and walk_features.
+  2. The four readouts (speed, steps, swing, bounce): step_rate and walk_features.
   3. The thesis's gait features (walk_gait), copied unchanged from the thesis code (tests/test_walks.py checks them),
      plus four scale-free measures of OpenDay's own on the same window (shape_features).
 
@@ -97,6 +97,12 @@ class WalkWindow:
         a, n = self.sm_active, len(self.sm_active)
         med = a[n // 2] if n % 2 else 0.5 * (a[n // 2 - 1] + a[n // 2])
         return self.peak >= self.arrive_jump * med
+
+    @property
+    def echo_db(self) -> float:
+        """The Echo tile (display only, never a decision): how strongly the walk stirred the signal, its smoothed
+        energy's peak over the room's level (e0), in dB. NaN before any active column."""
+        return float(10.0 * np.log10(self.peak / self.e0)) if self.peak > 0 else float("nan")
 
     @property
     def t_arrive(self) -> Optional[float]:
@@ -446,7 +452,7 @@ GAIT_PLAIN = [("speed", ("speed", "torso_hz")),
                + tuple(f"c95_cyc{i:02d}" for i in range(16))),
               ("body motion", tuple(f"uprof_{i}" for i in range(8))),
               ("movement strength", ("moddepth_dop", "sub_dispersion", "moddepth_dop10")),
-              ("body echo", ("adj4", "ev21", "pc1_frac"))]
+              ("signal shape", ("adj4", "ev21", "pc1_frac"))]
 
 
 def single_link(AN: np.ndarray, groups: Optional[np.ndarray] = None) -> dict:

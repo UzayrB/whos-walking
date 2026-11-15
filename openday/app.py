@@ -38,24 +38,23 @@ Uzayr walks pools.n_enrol_uzayr learning walks (5; his are kept for the next pla
 The second look (classifier.second_look): a game walk that is a close call (its margin below the model's tau) names
 nobody yet. After Thinking ... the card says "Walk once more!" ("Too close to call: the same walker again.", state
 AGAIN), the same walker walks once more, and the answer is decided on both walks, their readings averaged
-(models.average_walks; the tiles show those averaged readings, "Both walks"), and says "(from both walks)", How sure
-from the model's two-walk curve (Model.how_sure_both: cal2_m / cal2_p, fitted separately after training and added to
-the model file, laptop only; the one-walk curve when the file has none, logged once at start). At most one extra walk
-per game walk; a missed second walk leaves the first walk's own answer. The close call waits for its second walk
-(look2) only on "walk once more" (and its own Thinking step): a second look starts from nowhere else. Every way off
-that card comes back to it (Cancel walk or a lost signal during the second walk, Measure room whether it works or
-not, a lost signal or a receiver restart, New player then Cancel, the End game and Quit boxes' Keep going: _resting
-rests in AGAIN while the close call waits), or drops the close call with the player (Undo walk: "Last walk removed.",
-back to the game, nobody named; End game, a new player, Quit). Undo walk on the answer from both walks throws both
-away. A recording links the second walk to the first ("second_of" in its walk event), and an It was ... click labels
-both.
+(models.average_walks; the tiles show those averaged readings, "Both walks"), and says "(from both walks)". At most
+one extra walk per game walk; a missed second walk leaves the first walk's own answer. The close call waits for its
+second walk (look2) only on "walk once more" (and its own Thinking step): a second look starts from nowhere else.
+Every way off that card comes back to it (Cancel walk or a lost signal during the second walk, Measure room whether
+it works or not, a lost signal or a receiver restart, New player then Cancel, the End game and Quit boxes' Keep
+going: _resting rests in AGAIN while the close call waits), or drops the close call with the player (Undo walk:
+"Last walk removed.", back to the game, nobody named; End game, a new player, Quit). Undo walk on the answer from
+both walks throws both away. A recording links the second walk to the first ("second_of" in its walk event), and an
+It was ... click labels both.
 
 Labels: a learning walk is labelled by its turn (Undo walk redoes a wrong turn) and joins that person's pool; those
 walks are the pools for the whole game. A game walk never joins a pool and nothing is tallied. On the day there are
 no It was ... buttons (U / V do nothing). Only in a test recording (--record) It was Uzayr / It was {V} show on an
 answer: optional, one click is final, and it only writes the label event (for the bench tools to score later), so a
-recording behaves exactly like the day. The answer always names the nearer person ("How sure" is lower on a close
-call); the margin and the would-be "not sure" stay in the log and the events.
+recording behaves exactly like the day. The answer always names the nearer person, with How sure in words from its
+margin against the model's tau (models.sure_words: "Fairly sure", "Leaning", or "Close call" below tau); the margin
+and the would-be "not sure" stay in the log and the events.
 """
 
 from __future__ import annotations
@@ -83,9 +82,11 @@ DECIDING, RESULT = "DECIDING", "RESULT"
 LANE_HOLD_S, LANE_FADE_S = 4.0, 1.0                        # the lane: the marker stays on the X this long after a walk,
                                                            # fading out over the last second (the walker goes back)
 AGAIN = "AGAIN"                                            # a close call: the same walker walks once more (second look)
+SURE_BAR = {"Close call": 1 / 3, "Leaning": 2 / 3, "Fairly sure": 1.0}   # How sure's bar (models.sure_words)
 # (short labels, so "like {V}" has room beside them in the narrow tiles: on the MacBook "like Lerato" keeps about
-# 0.9 of its size, an 8-letter name about two-thirds, 9 letters 0.6; the steps value says "/min")
-TILE = {"speed": ("Speed", "{:.2f} m/s"), "steps": ("Steps", "{:.0f} /min"), "swing": ("Swing", "{:.1f}x"),
+# 0.9 of its size, an 8-letter name about two-thirds, 9 letters 0.6). Echo (display only, never a decision): how
+# strongly the walk stirred the signal, its loudest moment over the room's level (WalkWindow.echo_db)
+TILE = {"speed": ("Speed", "{:.2f} m/s"), "echo": ("Echo", "{:.0f} dB"), "swing": ("Swing", "{:.1f}x"),
         "bounce": ("Bounce", "{:.0f}%")}
 
 
@@ -164,9 +165,6 @@ class App:
         self.uz_redo = False                               # Redo my walks was clicked in this player's game
         self.uz_held: Optional[dict] = None                # Redo my walks: his old walks (memory) till a new one
         self.model = models.load_model(cfg, self.log)       # m1 (thesis data only); None = m0
-        if self.second_look and self.model is not None and self.model.cal2_m is None:
-            self.log("second look: the model has no two-walk How sure curve (cal2_m / cal2_p, fitted separately "
-                     "after training): an answer from both walks reads the one-walk curve")
         self.name: Optional[str] = None                                   # the visitor's name: memory only
         self.vidx: Optional[int] = None
         self.visitor_ready = False
@@ -787,7 +785,8 @@ class App:
         try:
             with open(self.baseline_path, encoding="utf-8") as f:
                 b = chain.Baseline.from_json(json.load(f))
-            same = b.variant == self.chain.spec.variant and b.nfft == self.chain.spec.nfft
+            same = (b.variant, b.nfft, b.resample) == (self.chain.spec.variant, self.chain.spec.nfft,
+                                                        chain.resample_mode(self.cfg))   # (the same chain)
             ok = _today(b.created) and same and len(b.floor) == len(self.chain.freqs)
         except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
             return None                                    # (a damaged file: as if there were none)
@@ -940,6 +939,7 @@ class App:
         if f is not None:                                  # the single-link gait set, from the click to the arrival
             t_arr = float(w.t_arrive)
             f.update(walks.walk_gait(*self.chain.raw.window(wk["t_dev"], t_arr), wk["t_dev"], t_arr, self.cfg))
+            f["echo"] = w.echo_db                          # (the Echo tile only: no model reads it)
         rel = lambda x: float(x - wk["t_dev"]) if x is not None else None  # noqa: E731
         rec = {"id": wk["id"], "purpose": wk["purpose"], "t_click": wk["t_click"], "t_dev": wk["t_dev"],
                "t_end_wall": None, "seen": f is not None, "reason": w.reason, "f": f,
@@ -1341,9 +1341,9 @@ class App:
         bars = [(first, show(this), frac(this))]
         if self.name is None:                              # nobody to compare with yet
             return bars
-        u = self.uz_fresh.means(self.names)[name] if len(self.uz_fresh) else None
+        u = self.uz_fresh.means([name])[name] if len(self.uz_fresh) else None
         bars.append(("Uzayr", show(u), frac(u)))
-        v = self.visitor.means(self.names)[name] if len(self.visitor) else None
+        v = self.visitor.means([name])[name] if len(self.visitor) else None
         bars.append((self._vname(9), show(v), frac(v)))
         return bars
 
@@ -1466,8 +1466,7 @@ class App:
         if both:                                                  # decided on (both walks averaged), "Both walks"
             f = rec["f_both"]
         tiles = {}
-        for n in self.names:
-            label, fmt = TILE[n]
+        for n, (label, fmt) in TILE.items():
             if st == WALKING:
                 val = "..."
                 if n == "speed":
@@ -1476,7 +1475,7 @@ class App:
                     val = fmt.format(float(np.median(v))) if v else "..."
                 tiles[n] = {"label": label, "value": val, "bars": []}
                 continue
-            this = f[n] if f else None
+            this = f.get(n) if f else None
             val = "-" if this is None or not np.isfinite(this) else fmt.format(this * 100 if n == "bounce" else this)
             t = {"label": label, "value": val, "bars": self._tile_bars(n, this, "Both walks" if both else "Last walk")}
             if rec is not None and f:                      # a learning walk's bar in the colour of whose turn it was
@@ -1687,13 +1686,11 @@ class App:
             who = "Uzayr" if d.label == "uzayr" else self._vname(BIG_NAME)
             why = d.why or models.why(d.contrib, d.label)
             colour = screen.UZAYR if d.label == "uzayr" else screen.VISITOR
-            p = None
-            if self.model is not None:                     # from both walks: the model's two-walk curve
-                p = self.model.how_sure_both(d.margin) if both else self.model.how_sure(d.margin)
-            conf = p if p is not None else d.margin
+            tau = self.model.tau if self.model is not None else float(self.cfg["classifier"]["tau"])
+            sure = models.sure_words(d.margin, tau)        # (words, no number; the bar: a third per step)
             # (no line under the name: the screen draws it bigger; Next walk is the operator's)
-            out = {"big": who, "big_color": colour, "conf": conf,
-                   "conf_text": f"How sure: {100 * conf:.0f}%", "conf_color": colour,
+            out = {"big": who, "big_color": colour, "conf": SURE_BAR[sure],
+                   "conf_text": f"How sure: {sure}", "conf_color": colour,
                    "why": ("Told apart by: " + _words(why[:2])) if why else ""}
             if both:                                       # (a line under the name: drawn at the smaller size)
                 out["sub"] = "(from both walks)"
@@ -1857,7 +1854,7 @@ def _say_if_no_model(cfg: dict, app: App) -> None:
     """A trained model is expected (classifier.kind is not m0) but did not load: say so on the terminal too, not only
     in the run log (the screen does not show it)."""
     if cfg["classifier"].get("kind", "m0") != "m0" and app.model is None:
-        print(f"No trained model at {models.model_file(cfg)}: using m0 (How sure shows the raw margin)",
+        print(f"No trained model at {models.model_file(cfg)}: using m0 (its own close-call line)",
               file=sys.stderr, flush=True)
 
 

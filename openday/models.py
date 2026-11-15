@@ -5,8 +5,8 @@ This file, in order:
      "not sure".
   2. The trained model: the features it uses, Model (saved as JSON) and load_model. It is fitted on the thesis
      people on the laptop (training_home/, not in this repo).
-  3. Deciding one walk with a model (decide), two walks averaged for the second look (average_walks; its How
-     sure is Model.how_sure_both), and the plain words for what separated it (why).
+  3. Deciding one walk with a model (decide), How sure in words (sure_words), two walks averaged for the second
+     look (average_walks), and the plain words for what separated it (why).
   4. The pools (each person's learning walks, in memory only) and the day's tally.
 
 Two-person decisions for people the model never saw in training (the speaker-verification idea). The model
@@ -34,7 +34,7 @@ from typing import Optional, Sequence
 import numpy as np
 
 import openday
-from openday import walks
+from openday import chain, walks
 
 # --- 1. The nearest-centre rule (m0) ---
 
@@ -120,7 +120,8 @@ class Model:
     P: Optional[np.ndarray] = None                 # m1: (r, d) projection from standardised features
     lam: Optional[np.ndarray] = None               # m1: between-person variance per direction (within = 1)
     meta: dict = field(default_factory=dict)
-    cal_m: Optional[np.ndarray] = None             # "How sure": margin knots ...
+    cal_m: Optional[np.ndarray] = None             # "How sure" as a share (the laptop's tools; the screen says
+                                                   # sure_words): margin knots ...
     cal_p: Optional[np.ndarray] = None             # ... and how often decisions that clear were right (leave-two-out)
     cal2_m: Optional[np.ndarray] = None            # the same for an answer from both walks (the second look): the
     cal2_p: Optional[np.ndarray] = None            # two walks' margin -> how often such answers were right
@@ -197,18 +198,23 @@ def _curve_ok(cm: Optional[np.ndarray], cp: Optional[np.ndarray]) -> bool:
                 and np.all((cp >= 0.0) & (cp <= 1.0)) and np.all(np.diff(cp) >= 0))
 
 
+def _grid(cfg: dict) -> bool:
+    """dsp.resample grid (the chain before 16 Nov, also when the line is missing): its own model and close-call line
+    (classifier.grid_model_path, grid_model_tau), the ones trained through that chain."""
+    return chain.resample_mode(cfg) == "grid"
+
+
 def model_file(cfg: dict) -> str:
-    """classifier.model_path, inside OpenDay/ unless it is an absolute path."""
-    p = cfg["classifier"]["model_path"]
+    """classifier.model_path (dsp.resample grid: grid_model_path), inside OpenDay/ unless it is an absolute path."""
+    p = cfg["classifier"]["grid_model_path" if _grid(cfg) else "model_path"]
     return p if os.path.isabs(p) else os.path.join(openday.OPENDAY, p)
 
 
 def load_model(cfg: dict, log=print) -> Optional[Model]:
-    """The trained model the config names (classifier.kind, model_path), its tau set to classifier.model_tau. None
-    for kind m0, or when the file is missing or unreadable (logged; the nearest-centre rule m0 is used then). Its
-    two-walk How sure curve (cal2_m / cal2_p, the second look's, fitted separately after training) is kept only when
-    it is well formed (_curve_ok); else it is dropped (logged) and an answer from both walks reads the one-walk
-    curve."""
+    """The trained model the config names (classifier.kind, model_file), its tau set to classifier.model_tau
+    (dsp.resample grid: grid_model_tau). None for kind m0, or when the file is missing or unreadable (logged; the
+    nearest-centre rule m0 is used then). Its two-walk How sure curve (cal2_m / cal2_p, the laptop's tools; the screen
+    reads no curve) is kept only when it is well formed (_curve_ok); else it is dropped (logged)."""
     c = cfg["classifier"]
     if c.get("kind", "m0") == "m0":
         return None
@@ -218,12 +224,11 @@ def load_model(cfg: dict, log=print) -> Optional[Model]:
     except (OSError, ValueError, KeyError) as exc:
         log(f"model {p} not loaded ({exc}): using m0")
         return None
-    m.tau = float(c.get("model_tau", m.tau))
+    m.tau = float(c.get("grid_model_tau" if _grid(cfg) else "model_tau", m.tau))
     if (m.cal2_m is not None or m.cal2_p is not None) and not _curve_ok(m.cal2_m, m.cal2_p):
         log("model: its two-walk How sure curve (cal2_m / cal2_p) is not usable: the one-walk curve is read instead")
         m.cal2_m = m.cal2_p = None
-    log(f"model {m.kind} ({len(m.names)} features" + ("; How sure from both walks: its own curve)"
-                                                       if m.cal2_m is not None else ")"))
+    log(f"model {m.kind} ({len(m.names)} features)")
     return m
 
 
@@ -264,6 +269,12 @@ def decide(m: Model, f: dict, pools: dict) -> Optional[Decision]:
         dd, mm = scores(sp, xs, es)
         d.speed_only = Decision(min(CLASSES, key=lambda k: dd[k]), float(mm), bool(mm < m.tau), dd, {})
     return d
+
+
+def sure_words(margin: float, tau: float) -> str:
+    """How sure, in words (no number): the margin against the close-call line tau. From 4 tau "Fairly sure", from
+    tau "Leaning", under it "Close call" (an answer the second look did not settle, or with it off)."""
+    return "Fairly sure" if margin >= 4.0 * tau else ("Leaning" if margin >= tau else "Close call")
 
 
 def average_walks(fs: Sequence[dict]) -> dict:

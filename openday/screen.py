@@ -359,7 +359,7 @@ class Screen:
         # tiles
         self.tiles = {}
         x1, y1 = TILE_X0 + TILE_W + TILE_GAP, TILE_Y0 + TILE_H + 0.01
-        spots = {"speed": (TILE_X0, y1), "steps": (x1, y1), "swing": (TILE_X0, TILE_Y0), "bounce": (x1, TILE_Y0)}
+        spots = {"speed": (TILE_X0, y1), "echo": (x1, y1), "swing": (TILE_X0, TILE_Y0), "bounce": (x1, TILE_Y0)}
         for name, (x, y) in spots.items():
             ax = self.fig.add_axes([x, y, TILE_W, TILE_H], facecolor=PANEL)
             ax.set_xlim(0, 1)
