@@ -47,7 +47,7 @@ def test_no_participant_name_in_published_files():
     """Every file git would publish (tracked, or new and not ignored), by its path and its raw bytes (pictures too),
     against the laptop-only list of names (the six participants and the two recorded but never used): a plain
     substring in any case, so also inside a longer word or file name. Only the kinds of file above are published.
-    The list itself, the trained model and its manifest must stay ignored. A failure names the file, never the name (unless the name is in the file's path)."""
+    The list itself, the trained model, its manifest and training/ must stay ignored. A failure names the file, never the name (unless the name is in the file's path)."""
     if not openday.have_people():
         pytest.skip("no configs/people.local.yaml on this machine")
     if not shutil.which("git") or _git("rev-parse", "--is-inside-work-tree").stdout.strip() != "true":
@@ -73,5 +73,6 @@ def test_no_participant_name_in_published_files():
             hits.append(f)
     assert not odd, f"not a kind of file this repo publishes (see PUBLISHED_EXT): {odd[:50]}"
     assert not hits, f"a participant's name is in these files: {hits[:50]}"
-    for f in ("configs/people.local.yaml", "state/model/model.json", "state/model/manifest.json"):
+    for f in ("configs/people.local.yaml", "state/model/model.json", "state/model/manifest.json",
+              "training/build.py", "training/candidate/model.json"):
         assert _git("check-ignore", "-q", f).returncode == 0, f"{f} is not git-ignored"

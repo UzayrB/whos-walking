@@ -1,6 +1,6 @@
 """The signal chain (openday/chain.py): a synthetic Doppler tone reads as the right speed, the live bins, the
 gain-invariant normalisation, live and offline batches giving the same columns, the receiver's clock, the front end
-(dsp.resample packets or grid) and the raw ring whatever the batches, the room measurement with someone moving in
+(the packets as they come) and the raw ring whatever the batches, the room measurement with someone moving in
 it; then the 3D picture's movement bars on their own (the Ridge class): frequency order, one ridge per waterfall
 column, where the signal wobbles."""
 
@@ -61,10 +61,8 @@ def test_normalisation_is_gain_invariant(cfg):
 
 
 @pytest.mark.needs_code
-@pytest.mark.parametrize("resample", ["packets", "grid"])
-def test_batch_size_does_not_change_columns(cfg, resample):
+def test_batch_size_does_not_change_columns(cfg):
     """Offline (big batches) equals live (small batches): the chain is causal and incremental."""
-    cfg["dsp"]["resample"] = resample
     fr = recordings.segment(recordings.load_rx2("P4", 1, "natural"), *(lambda a: (a[0] - 3, a[-1] + 1))(
         recordings.passes("P4", 1, "natural", "S")[0]["anchor_times"]))
     outs = []
@@ -87,7 +85,7 @@ def test_device_clock_unwraps_and_restarts(cfg):
     assert restarted and c.wraps == 0
 
 
-# ---- dsp.resample: packets (each packet a sample, from 16 Nov) or grid (the 150 Hz grid, as before) ----------------
+# ---- the front end: each packet a sample ----------------------------------------------------------------------------
 
 def _stream(seed=4, n=900):
     """Packet times 6 or 7 ms apart (about 150 a second), a lost packet here and there and one 80 ms hole (longer
@@ -113,7 +111,7 @@ def _hampel_reference(k, x, g, cfg):
 
 
 def _packets_reference(t, a, cfg):
-    """dsp.resample packets in one batch, written out plainly (the 15 Nov study's reference, flib.front with rs
+    """The front end in one batch, written out plainly (the 15 Nov study's reference, flib.front with rs
     packets and ma 2): a step dT leaves rint(dT fs) - 1 lost places, each filled linearly at its own time (a gap
     when dT > gap_s); k = the running maximum of rint(time fs); each sample the mean of itself and the one before."""
     fs, gap_s = float(cfg["radio"]["fs_hz"]), float(cfg["dsp"]["gap_s"])
@@ -135,16 +133,6 @@ def _packets_reference(t, a, cfg):
     return _hampel_reference(np.maximum.accumulate(np.rint(np.array(ts) * fs).astype(np.int64)), x, np.array(gs), cfg)
 
 
-def _grid_reference(t, a, cfg):
-    """dsp.resample grid (as before 16 Nov) in one batch: linear resampling onto the 150 Hz grid, then the Hampel."""
-    fs = float(cfg["radio"]["fs_hz"])
-    k = np.arange(int(np.ceil(t[0] * fs)), int(np.floor(t[-1] * fs)) + 1, dtype=np.int64)
-    g = k / fs
-    i = np.clip(np.searchsorted(t, g, side="right") - 1, 0, len(t) - 2)
-    w = ((g - t[i]) / (t[i + 1] - t[i]))[:, None]
-    return _hampel_reference(k, a[i] * (1.0 - w) + a[i + 1] * w, t[i + 1] - t[i] > float(cfg["dsp"]["gap_s"]), cfg)
-
-
 def _front(cfg, t, a, seed):
     """FrontEnd fed 1 to 29 packets at a time: (grid indices, samples before the high-pass, gap flags)."""
     rng, fe, out, i = np.random.default_rng(seed), chain.FrontEnd(cfg), [], 0
@@ -158,18 +146,12 @@ def _front(cfg, t, a, seed):
     return tuple(np.concatenate([o[j] for o in out]) for j in range(3))
 
 
-@pytest.mark.parametrize("resample", ["packets", "grid", None])
-def test_the_front_end_whatever_the_batches(cfg, resample):
-    """dsp.resample packets: fed 1 to 29 packets at a time, the live front end gives exactly the plain one-batch
-    reference (lost places filled, two samples may share a grid index, each sample the mean with the one before).
-    grid, or a config without the switch: exactly the 150 Hz grid as before 16 Nov."""
-    if resample is None:
-        del cfg["dsp"]["resample"]
-    else:
-        cfg["dsp"]["resample"] = resample
+def test_the_front_end_whatever_the_batches(cfg):
+    """Fed 1 to 29 packets at a time, the live front end gives exactly the plain one-batch reference (lost places
+    filled, two samples may share a grid index, each sample the mean with the one before)."""
     t, a = _stream()
-    k0, x0, g0 = (_packets_reference if resample == "packets" else _grid_reference)(t, a, cfg)
-    assert g0.any() and (np.any(np.diff(k0) == 0) if resample == "packets" else np.all(np.diff(k0) == 1))
+    k0, x0, g0 = _packets_reference(t, a, cfg)
+    assert g0.any() and np.any(np.diff(k0) == 0)
     for seed in (1, 2, 3):
         k, x, g = _front(cfg, t, a, seed)
         assert np.array_equal(k, k0) and np.array_equal(g, g0)
@@ -177,7 +159,7 @@ def test_the_front_end_whatever_the_batches(cfg, resample):
 
 
 def test_the_raw_ring_keeps_a_shared_grid_index_and_restarts_when_it_goes_back():
-    """With dsp.resample packets two samples can share a grid index, also across two batches: the ring carries on.
+    """Two samples can share a grid index, also across two batches: the ring carries on.
     An index that goes back is a restart."""
     r = chain.RawRing(150.0, 10.0)
     r.push(np.array([1, 2, 3]), np.ones((3, 2)))

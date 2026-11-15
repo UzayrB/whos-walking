@@ -248,7 +248,7 @@ Start walk.
 | Red light "Weak signal" | Fewer than 100 packets a second reach the laptop (Details shows about 150 when all is well). Check the RX2 cable and socket. |
 | "Missed that one" keeps appearing | Start each walk from the back mark, click as the walker sets off, and keep everyone else away from the boards. After two misses in a row the light says "Missed twice". |
 | The light stays on "Wait for green" | Ask people near the boards to step back. Nobody within 3 m, but people moving further back? Start the walk anyway, and click **They've stopped** as the walker lands. Nobody moving anywhere at all, and it stays amber? Something near the boards changed: [If you move the boards](#if-you-move-the-boards). |
-| The light says "Measure the room again" ("Someone moved" on your line) | Someone moved while the room was measured, and today has no clean measurement yet: **Measure room** (top right) again, everyone still. |
+| The light says "Measure the room again" ("Someone moved" on your line) | Someone moved while the room was measured, and today has no clean measurement yet: **Measure room** (top right) again, everyone still. Now and then it says this in a still room too: just measure again (it never causes missed walks). |
 | Your line says "Busier than earlier", "About the same as earlier" or "Someone moved: kept the earlier room level" | Nothing to do: that measurement wasn't clearly quieter than today's, so the app kept today's level (and your walks). |
 | You clicked **They've stopped** but the walk had already ended | Nothing happens (your line says "Ignored"): the big button is grey for 3 s after each walk. Click again as the next walker sets off. |
 | The answer is slow, or a walk runs on to 9 s | Click **They've stopped** as soon as the walker stands still on the X. |
@@ -268,23 +268,6 @@ wrong, so make the app forget it:
 1. **Quit**, **Yes, quit**.
 2. In the VS Code terminal type `./run_openday.command --new-room` (it forgets today's room level).
 3. **Measure room**, with nobody within 3 m moving. This is the new level for the rest of the day.
-
-### If the new cleaning misbehaves
-
-Since 16 Nov the app uses the radio packets as they come (no resampling onto a 150 Hz grid), with a model trained
-that way. To go back to exactly the cleaning and the model of before (answers odd all day, or walks missed far more
-often; the screen keeps its How sure words and the Echo tile):
-
-1. **Quit**, **Yes, quit**.
-2. In `configs/openday.yaml`, under `dsp:`, change `resample: packets` to `resample: grid`. That also picks the old
-   model (`state/model_grid/`) and its close-call line.
-3. Start the app again and click **Measure room**, with nobody within 3 m moving. (A room level measured through
-   the other cleaning does not fit, so **Use last measurement** does not offer it.)
-
-With the new cleaning, **Measure room** may now and then say "Someone moved" in a still room: just click **Measure
-room** again. It never causes missed walks.
-
-To return to the new cleaning, do the same with `resample: packets`.
 
 ## 7. Solo test at home
 
@@ -348,7 +331,7 @@ for 10 minutes, so usually only the visitor walks). A game walk that is too clos
 the answer comes from both walks. After that, the screen tells them apart from the radio echo alone.
 Every walk also gives a walking speed.
 
-The decision model (`state/model/`, retrained 15 Nov through the new cleaning, section 6) never saw Uzayr or any
+The decision model (`state/model/`, retrained 15 Nov on the radio packets as they come) never saw Uzayr or any
 visitor: it
 learned, from the six thesis participants only, how two walks of one person differ from walks of two different
 people (the speaker-verification idea), using 9 measures of each walk: speed, leg swing (the Swing tile's reading
@@ -461,7 +444,7 @@ PYTHONDONTWRITEBYTECODE=1 /opt/anaconda3/bin/python3 -m pytest -p no:cacheprovid
 - **`eval --bench`** scores a two-person session recorded as `bench-checklist` describes, into
   `reports/bench_<folder>.md` (laptop only). The first line is PASS or FAIL: the simple rule (m0) with the 5 + 5
   alternating learning walks, 18 of the 20 test walks needed. Then the shipped model with those 5 + 5, with the
-  app's round (the visitor's 2, your 5) and with 2 + 2 (the round `training_home/retrain.py` scores), the pool from
+  app's round (the visitor's 2, your 5) and with 2 + 2 (the older round), the pool from
   before the break, whether the two walkers' speeds overlap, and the second looks (a close call walked once more is
   scored on both walks averaged, as the round showed it).
 - **`bench-check`** takes one run folder or a folder of runs, re-runs every recorded walk through the live chain
@@ -506,7 +489,6 @@ The app is a pipeline, and the files in `openday/` follow it. Start with `__main
 - `recordings.py`: playing thesis recordings (by participant code) instead of the boards, and the replay playlists.
 - `bench.py`: the home-test tools: `eval --bench`, `bench-check`, `bench-checklist`.
 - `screenshots.py`: `screens` (the pictures in this README).
-- `evaluate.py`: two helpers the laptop's retraining tools use (`training_home/`); the app never calls them.
 - `__init__.py`: where things live, the settings loader and the participant codes. `__main__.py`: the command line.
 
 The rest:
@@ -529,5 +511,5 @@ The rest:
   - `state/` (the trained model and its backups, the room level, the visitor count);
   - `bench/` (the home-test recordings), `logs/` (the run logs), `reports/bench_*.md` (their scores);
   - `reports/progress.md` (the build log);
-  - `training_home/` (retraining with home walks) and `training_20261109/` (the 9 Nov retrain, which
-    `training_home/` reads).
+  - `training/` (rebuilds the trained model from the thesis recordings; never needed on the day: its own
+    README).

@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import openday
-from openday import chain, evaluate, models
+from openday import models
 from openday import models as M
 from openday.models import Pool, Tally
 
@@ -55,7 +55,8 @@ def test_saved_model_gives_identical_decisions(tmp_path):
         f = dict(zip(M.ALL, rng.normal(size=len(M.ALL))))
         f.update(speed=1.0 + 0.1 * rng.normal(), moddepth_dop=0.02, sub_dispersion=1e7, moddepth_dop10=0.01)
         walks_.append(f)
-    mu, sd = evaluate.fit_standard(np.array([M.vec(f, M.ALL) for f in walks_]))
+    X = np.array([M.vec(f, M.ALL) for f in walks_])
+    mu, sd = np.nanmean(X, axis=0), np.nanstd(X, axis=0)
     m = M.Model("m1", list(M.ALL), mu, sd, tau=0.0836, P=rng.normal(size=(len(M.ALL), len(M.ALL))),
                 lam=rng.random(len(M.ALL)))
     p = str(tmp_path / "m1.json")
@@ -65,7 +66,7 @@ def test_saved_model_gives_identical_decisions(tmp_path):
     for f in walks_[6:]:
         a, b = M.decide(m, f, pools), M.decide(back, f, pools)
         assert (a.label, a.not_sure, a.why) == (b.label, b.not_sure, b.why) and a.margin == b.margin
-    cfg = {"dsp": {"resample": "packets"}, "classifier": {"kind": "m1", "model_path": p, "model_tau": 0.1}}
+    cfg = {"classifier": {"kind": "m1", "model_path": p, "model_tau": 0.1}}
     for old in ({"plda": True}, {"session_centre": True}, {"kind": "m2"}):
         with open(p, "w", encoding="utf-8") as f:
             json.dump(dict(m.to_json(), **old), f)
@@ -91,55 +92,38 @@ def test_shipped_model_is_thesis_only_and_loads(cfg_shipped):
     assert not any("bench" in f for f in man["trained_on"]["files"])          # no home or bench recording
 
 
-def test_the_switch_back_to_the_grid_takes_the_grid_model_and_its_tau(tmp_path):
-    """dsp.resample packets reads classifier.model_path with model_tau; grid (the chain before 16 Nov) reads
-    grid_model_path with grid_model_tau, the model trained through that chain. A config without the line is grid:
-    the grid model (and the grid front end); any other value is refused, never a silent mix."""
-    paths = {}
-    for which in ("packets", "grid"):
-        m = M.Model("m1", ["speed"], np.zeros(1), np.ones(1), P=np.eye(1), lam=np.ones(1), meta={"made": which})
-        paths[which] = str(tmp_path / f"{which}.json")
-        m.save(paths[which])
-    cfg = {"dsp": {"resample": "packets"}, "classifier": {"kind": "m1", "model_path": paths["packets"],
-                                                          "model_tau": 0.046, "grid_model_path": paths["grid"],
-                                                          "grid_model_tau": 0.1094}}
-    for which, tau in (("packets", 0.046), ("grid", 0.1094)):
-        cfg["dsp"]["resample"] = which
-        m = M.load_model(cfg, lambda _s: None)
-        assert (m.meta["made"], m.tau, M.model_file(cfg)) == (which, tau, paths[which])
-    for missing in ({}, {"dsp": {}}):                              # the line deleted: grid, and the grid model
-        c = dict(cfg, **missing) if missing else {k: v for k, v in cfg.items() if k != "dsp"}
-        m = M.load_model(c, lambda _s: None)
-        assert (m.meta["made"], m.tau, chain.resample_mode(c)) == ("grid", 0.1094, "grid")
-    cfg["dsp"]["resample"] = " Packets "                           # (spacing and capitals are fine)
-    assert M.load_model(cfg, lambda _s: None).meta["made"] == "packets"
-    for bad in ("packet", "grids", "", "yes"):                     # a typo: the app stops with a plain message
-        cfg["dsp"]["resample"] = bad
-        with pytest.raises(SystemExit, match="must be packets or grid"):
-            M.load_model(cfg, lambda _s: None)
-        with pytest.raises(SystemExit, match="must be packets or grid"):
-            chain.FrontEnd(openday.load_config() | {"dsp": dict(openday.load_config()["dsp"], resample=bad)})
-
-
-def test_the_shipped_switch(cfg_shipped):
-    """As shipped: no resampling, the model trained that way and its line; the way back names the model and line
-    in use before 16 Nov."""
+def test_the_shipped_model_lines(cfg_shipped):
+    """As shipped: the trained model in state/model and its close-call line; no How-sure numbers in the public
+    config (How sure is words from the margin against that line, sure_words)."""
     c = cfg_shipped["classifier"]
-    assert cfg_shipped["dsp"]["resample"] == "packets"
     assert (c["model_path"], c["model_tau"]) == ("state/model/model.json", 0.046)
-    assert (c["grid_model_path"], c["grid_model_tau"]) == ("state/model_grid/model.json", 0.1094)
+    assert not {"second_look_sure", "cal_m", "cal_p", "cal2_m", "cal2_p"} & set(c)
 
 
-@pytest.mark.needs_model
-def test_the_grid_model_is_the_one_before_16_nov(cfg_shipped):
-    """The installed models: state/model was trained through the packets chain, state/model_grid (the way back) is
-    the model in use before 16 Nov (set B, How sure curves in its file)."""
-    grid = os.path.join(openday.OPENDAY, cfg_shipped["classifier"]["grid_model_path"])
-    if not os.path.exists(grid):
-        pytest.skip("no state/model_grid on this machine")
-    new = M.Model.load(os.path.join(openday.OPENDAY, cfg_shipped["classifier"]["model_path"]))
-    old = M.Model.load(grid)
-    assert new.names == old.names and "packets" in new.meta.get("chain", "") and old.cal2_m is not None
+def test_a_model_file_with_the_older_how_sure_curves_still_loads(tmp_path):
+    """An older model file (with How sure curves, well formed or not) loads, keeps its tau from the config and
+    decides exactly as the same file without them; save writes no curve."""
+    rng = np.random.default_rng(3)
+    walks_ = [dict(zip(M.ALL, rng.normal(size=len(M.ALL))), speed=1.0 + 0.2 * rng.normal()) for _ in range(9)]
+    m = M.Model("m1", ["speed", "swing"], np.zeros(2), np.ones(2), tau=0.05, P=np.eye(2), lam=np.ones(2))
+    p = str(tmp_path / "model.json")
+    m.save(p)
+    with open(p, encoding="utf-8") as f:
+        d = json.load(f)
+    assert not {"cal_m", "cal_p", "cal2_m", "cal2_p"} & set(d)
+    cfg = {"classifier": {"kind": "m1", "model_path": p, "model_tau": 0.1}}
+    pools = {"uzayr": walks_[:3], "visitor": walks_[3:6]}
+    for curves in ({"cal_m": [0.0, 0.4], "cal_p": [0.55, 0.95], "cal2_m": [0.0, 0.2], "cal2_p": [0.5, 0.7]},
+                   {"cal_m": None, "cal_p": None, "cal2_m": None, "cal2_p": None},
+                   {"cal2_m": [0.2, 0.0], "cal2_p": ["a", None]}):
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(dict(d, **curves), f)
+        logs: list = []
+        lm = M.load_model(cfg, logs.append)
+        assert lm is not None and lm.tau == 0.1 and logs == ["model m1 (2 features)"], curves
+        for f in walks_[6:]:
+            a, b = M.decide(m, f, pools), M.decide(lm, f, pools)
+            assert (a.label, a.margin, a.why) == (b.label, b.margin, b.why)
 
 
 def test_how_sure_is_words_from_the_margin_against_tau():
@@ -192,7 +176,7 @@ def test_every_measure_has_plain_words_and_the_new_scale_is_log():
     assert M.why({"adj4": 1.0, "pc1_frac": 0.5, "speed": 0.1}, "uzayr") == ["signal shape", "speed"]
 
 
-# ---- the second look: two walks as one, and its How sure ------------------------------------------------------------
+# ---- the second look: two walks as one -------------------------------------------------------------------------------
 
 def test_two_walks_averaged_as_the_model_sees_them():
     """models.average_walks: each reading the mean of the two walks; one missing (NaN or None) takes the other's;
@@ -205,62 +189,3 @@ def test_two_walks_averaged_as_the_model_sees_them():
     assert f["c50_cv"] == pytest.approx(0.3) and f["swing"] == pytest.approx(2.0) and f["bounce"] == 0.3
     assert np.isnan(M.average_walks([{"x": float("nan")}, {"x": float("nan")}])["x"])
     assert M.vec(f, ["moddepth_dop"])[0] == pytest.approx(np.mean([np.log(0.01), np.log(0.04)]))
-
-
-def test_how_sure_from_both_walks_reads_the_models_own_curve(tmp_path, cfg_shipped):
-    """Model.how_sure_both: the two-walk curve in the model file (cal2_m / cal2_p, fitted separately after training,
-    laptop only like the model; no How-sure numbers in the public config), capped at 99 %; a model file without one (an older file) reads the
-    one-walk curve. The curve survives save / load; load_model drops a malformed one (and says so): lengths that
-    differ, nothing in it, a value not finite, margins or shares falling, a share outside 0-1, not numbers, half a
-    curve; the model itself still loads."""
-    assert not {"second_look_sure", "cal_m", "cal_p", "cal2_m", "cal2_p"} & set(cfg_shipped["classifier"])
-    m = M.Model("m1", ["speed"], np.zeros(1), np.ones(1), cal_m=np.array([0.0, 0.4]), cal_p=np.array([0.55, 0.95]))
-    assert m.how_sure_both(0.2) == pytest.approx(m.how_sure(0.2)) == pytest.approx(0.75)    # no two-walk curve
-    m.cal2_m, m.cal2_p = np.array([0.0, 0.2, 0.5]), np.array([0.5, 0.7, 1.0])               # (synthetic)
-    assert m.how_sure_both(0.1) == pytest.approx(0.6) and m.how_sure_both(-1.0) == pytest.approx(0.5)
-    assert m.how_sure_both(0.5) == 0.99 and m.how_sure(0.2) == pytest.approx(0.75)          # the one-walk curve stays
-    p = str(tmp_path / "model.json")
-    m.save(p)
-    back = M.Model.load(p)
-    assert back.cal2_m.tolist() == m.cal2_m.tolist() and back.cal2_p.tolist() == m.cal2_p.tolist()
-    with open(p, encoding="utf-8") as f:
-        d = json.load(f)
-    del d["cal2_m"], d["cal2_p"]                                                             # an older model file
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump(d, f)
-    assert M.Model.load(p).cal2_m is None and M.Model.load(p).how_sure_both(0.2) == pytest.approx(0.75)
-    cfg = {"dsp": {"resample": "packets"}, "classifier": {"kind": "m1", "model_path": p, "model_tau": 0.1}}
-    nan, inf = float("nan"), float("inf")
-    for cm, cp, kept in (([0.0, 0.2], [0.5, 0.7], True),                  # well formed
-                         ([0.0, 0.2], [0.5], False),                       # lengths differ
-                         ([0.2, 0.0], [0.5, 0.7], False),                  # margins falling
-                         ([], [], False),                                  # empty
-                         ([0.0, nan], [0.5, 0.7], False),                  # a margin not finite (NaN, inf)
-                         ([0.0, inf], [0.5, 0.7], False),
-                         ([0.0, 0.2], [0.5, None], False),                 # a share missing (null)
-                         ([0.0, 0.2], [0.5, 1.2], False),                  # a share above 1 (or below 0)
-                         ([0.0, 0.2], [-0.1, 0.7], False),
-                         ([0.0, 0.2], [0.7, 0.5], False),                  # shares falling: wider is never less sure
-                         ([0.0, 0.2], ["a", "b"], False),                  # not numbers: the model still loads
-                         ([[0.0, 0.2]], [[0.5, 0.7]], False),              # not a list of numbers
-                         (None, [0.5, 0.7], False)):                       # half a curve
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(dict(d, cal2_m=cm, cal2_p=cp), f)
-        logs: list = []
-        lm = M.load_model(cfg, logs.append)
-        assert lm is not None, (cm, cp)                                    # the model itself always loads
-        assert (lm.cal2_m is not None) == kept and (lm.cal2_p is not None) == kept, (cm, cp)
-        assert lm.how_sure_both(0.1) == pytest.approx(0.6 if kept else 0.65), (cm, cp)
-        assert ("not usable" in logs[0]) != kept, (cm, cp, logs)
-
-
-@pytest.mark.needs_model
-def test_installed_models_two_walk_curve_is_well_formed(cfg_shipped):
-    """The installed model's two-walk How sure curve, when it has one: as many knots as values, margins rising,
-    values rising from at least 50 % (PAV), never above 100 %; load_model keeps it."""
-    m = M.load_model(cfg_shipped, lambda s: None)
-    if m is None or m.cal2_m is None:
-        pytest.skip("the installed model has no two-walk curve (the screen's How sure does not read one)")
-    cm, cp = np.asarray(m.cal2_m), np.asarray(m.cal2_p)
-    assert len(cm) == len(cp) >= 2 and np.all(np.diff(cm) > 0) and np.all(np.diff(cp) >= 0)
-    assert 0.5 <= cp[0] and cp[-1] <= 1.0 and m.how_sure_both(1.0) <= 0.99

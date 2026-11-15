@@ -8,11 +8,13 @@ configs/*.local.yaml
 state/
 model_backup_*/
 manifest.json
-# Raw recordings, home-test reports, logs, the retrain record, the build log, test leftovers:
+# Raw recordings, home-test reports, logs, the model's training folder (it reads the thesis recordings) and old
+# retrain records, the build log, test leftovers:
 bench/
 reports/bench_*.md
 reports/progress.md
 logs/
+training/
 training_*/
 .pytest_tmp/
 __pycache__/

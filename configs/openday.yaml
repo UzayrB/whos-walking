@@ -19,12 +19,8 @@ clock:
   offset_block_s: 5.0          # host-minus-device offset: lower envelope in blocks of this length
   offset_blocks: 6             # ... over this many blocks (30 s)
 
-dsp:
-  resample: packets            # packets (from 16 Nov): no resampling, each packet a sample (its mean with the one
-                               # before), lost packets filled from their neighbours; with the model trained that way
-                               # (classifier.model_path). grid: the 150 Hz grid and the model before 16 Nov
-                               # (grid_model_path), exactly as before (README section 6, "If the new cleaning
-                               # misbehaves")
+dsp:                           # the samples: the packets as they come (no resampling), each a sample (its mean
+                               # with the one before), lost packets filled from their neighbours (chain.FrontEnd)
   gap_s: 0.05                  # samples bridging a longer packet gap are marked as gaps
   restart_gap_s: 1.0           # a longer silence restarts the chain (filters re-warm)
   tick_batch: 8                # run the chain in tick once this many packets are waiting ...
@@ -82,14 +78,12 @@ gait:                          # the thesis's single-link gait features (openday
 
 classifier:
   kind: m1                     # m1: the trained model (model_path); m0: the nearest-centre rule (no model needed)
-  model_path: state/model/model.json   # m1: the trained model, fitted on the six thesis people only (laptop only),
-                               # through dsp.resample packets
+  model_path: state/model/model.json   # m1: the trained model, fitted on the six thesis people only (laptop only;
+                               # training/ rebuilds it)
   model_tau: 0.046             # m1: a margin below this is a close call: the answer still names the nearer person
                                # (with second_look: after one more walk), and the log counts it; set so that about 15 %
                                # of the home tests' decisions fall below it. How sure: "Leaning" from it, "Fairly sure"
                                # from 4 times it
-  grid_model_path: state/model_grid/model.json   # dsp.resample grid: the model before 16 Nov ...
-  grid_model_tau: 0.1094       # ... and its close-call line
   second_look: true            # a GAME walk below the close-call line (model_tau; m0: tau) names nobody yet: the card
                                # says "Walk once more!" (too close to call) and the same walker walks again; the answer
                                # is then decided on both walks (their readings averaged) and says "(from both walks)".

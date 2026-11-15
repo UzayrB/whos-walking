@@ -786,7 +786,7 @@ class App:
             with open(self.baseline_path, encoding="utf-8") as f:
                 b = chain.Baseline.from_json(json.load(f))
             same = (b.variant, b.nfft, b.resample) == (self.chain.spec.variant, self.chain.spec.nfft,
-                                                        chain.resample_mode(self.cfg))   # (the same chain)
+                                                        "packets")   # (the same chain: not an older app's level)
             ok = _today(b.created) and same and len(b.floor) == len(self.chain.freqs)
         except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError):
             return None                                    # (a damaged file: as if there were none)

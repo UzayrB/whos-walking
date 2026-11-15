@@ -107,28 +107,18 @@ class DeviceClock:
         return min(m for _b, m in self.blocks) if self.blocks else None
 
 
-def resample_mode(cfg: dict) -> str:
-    """dsp.resample: "packets" or "grid" (a config without the line: "grid", the cleaning and the model before 16 Nov).
-    Anything else stops the app with a plain message, so a typo never mixes one cleaning with the other's model."""
-    v = str(cfg.get("dsp", {}).get("resample", "grid")).strip().lower()
-    if v not in ("packets", "grid"):
-        raise SystemExit(f"configs/openday.yaml: dsp: resample is {v!r}; it must be packets or grid")
-    return v
-
-
 class FrontEnd:
-    """The samples (dsp.resample), causal Hampel, causal Butterworth high-pass.
+    """The samples, causal Hampel, causal Butterworth high-pass.
 
-    grid: uniform 150 Hz resampling (linear, on device time). packets: no resampling: each packet is a sample at its
-    own time (they come 6 or 7 ms apart, about 150 a second); a lost packet's place is filled from its two neighbours,
-    and each sample is the mean of itself and the one before (_packets). Its grid index k (the clocks, the columns'
-    times and the gait window) is the sample's time on the 150 Hz grid, never going back; two samples can share one.
+    No resampling: each packet is a sample at its own time (they come 6 or 7 ms apart, about 150 a second); a lost
+    packet's place is filled from its two neighbours, and each sample is the mean of itself and the one before
+    (_packets). Its grid index k (the clocks, the columns' times and the gait window) is the sample's time on the
+    150 Hz grid, never going back; two samples can share one.
     """
 
     def __init__(self, cfg: dict) -> None:
         d = cfg["dsp"]
         self.fs = float(cfg["radio"]["fs_hz"])
-        self.packets = resample_mode(cfg) == "packets"
         self.gap_s, self.restart_s = float(d["gap_s"]), float(d["restart_gap_s"])
         self.half = int(d["hampel_window"]) // 2
         self.nsig, self.mad_k = float(d["hampel_sigmas"]), float(d["hampel_mad_scale"])
@@ -139,8 +129,8 @@ class FrontEnd:
     def reset(self) -> None:
         self.t_last: Optional[float] = None
         self.a_last: Optional[np.ndarray] = None
-        self.k_next = 0                                    # the next sample's grid index (packets: at least this)
-        self.x_prev: Optional[np.ndarray] = None           # packets: the last sample, before the mean of two
+        self.k_next = 0                                    # the next sample's grid index is at least this
+        self.x_prev: Optional[np.ndarray] = None           # the last sample, before the mean of two
         self.hist: Optional[tuple[np.ndarray, np.ndarray, np.ndarray]] = None
         self.zi: Optional[np.ndarray] = None
         self.raw_out: tuple = (np.zeros(0, np.int64), None)   # the last batch before the high-pass (RawRing)
@@ -157,7 +147,7 @@ class FrontEnd:
                 t, a = t[k:], a[k:]
                 self.reset()
                 restarted = True
-        first = self.t_last is None                        # (packets: the first packet is a sample too)
+        first = self.t_last is None                        # (the first packet is a sample too)
         if first:
             if not len(t):
                 return np.zeros(0, np.int64), np.zeros((0, a.shape[1])), np.zeros(0, bool), restarted
@@ -167,29 +157,18 @@ class FrontEnd:
         keep = t > np.maximum.accumulate(np.concatenate(([self.t_last], t)))[:-1]
         t, a = t[keep], a[keep]
         n_sc = self.a_last.shape[0]
-        if not len(t) and not (self.packets and first):
+        if not len(t) and not first:
             return np.zeros(0, np.int64), np.zeros((0, n_sc)), np.zeros(0, bool), restarted
         T = np.concatenate(([self.t_last], t))
         A = np.concatenate((self.a_last[None, :], a))
-        if self.packets:
-            ks, x, gap = self._packets(T, A, first)
-        else:
-            k_end = int(np.floor(T[-1] * self.fs))
-            ks = np.arange(self.k_next, k_end + 1, dtype=np.int64)
-            self.k_next = k_end + 1
-            g = ks / self.fs
-            i = np.clip(np.searchsorted(T, g, side="right") - 1, 0, len(T) - 2)
-            span = T[i + 1] - T[i]
-            w = ((g - T[i]) / span)[:, None]
-            x = A[i] * (1.0 - w) + A[i + 1] * w
-            gap = span > self.gap_s
+        ks, x, gap = self._packets(T, A, first)
         self.t_last, self.a_last = float(T[-1]), A[-1]
         ks, x, gap = self._hampel(ks, x, gap)
         self.raw_out = (ks, x)
         return ks, self._filter(x), gap, restarted
 
     def _packets(self, T: np.ndarray, A: np.ndarray, first: bool):
-        """dsp.resample packets: packets T, A (T[0]: the batch before's last, already a sample unless `first`) ->
+        """Packets T, A (T[0]: the batch before's last, already a sample unless `first`) ->
         (grid indices, samples, gap flags). A step dT between two packets leaves rint(dT * fs) - 1 places of lost
         packets: each filled linearly from the two, at its own time, flagged a gap when dT > gap_s. Grid index =
         rint(time * fs), never below the one before. Each sample = the mean of itself and the one before."""
@@ -334,8 +313,9 @@ class Spectrogram:
 class Baseline:
     """Empty-room reference for one extractor: per-frequency median power and the median above-floor energy.
     `disturbed`: someone moved while the room was measured, so both come from its quiet part; `d`: how loud its
-    loudest second was against that part (room_baseline). `resample`: the front end it was measured through
-    (dsp.resample); a level from the other one does not fit."""
+    loudest second was against that part (room_baseline). `resample`: the front end it was measured through:
+    "packets" (FrontEnd). A level saved by an older app has none (it was measured through the old 150 Hz
+    resampling, read as "grid") and does not fit."""
 
     floor: np.ndarray
     e0: float
@@ -345,7 +325,7 @@ class Baseline:
     created: float = 0.0
     disturbed: bool = False
     d: float = 0.0
-    resample: str = "grid"
+    resample: str = "packets"
 
     def to_json(self) -> dict:
         return {"floor": [float(v) for v in self.floor], "e0": self.e0, "n_cols": self.n_cols,
@@ -400,7 +380,7 @@ def make_baseline(cols: Columns, cfg: dict, freqs: np.ndarray, variant: str, nff
     """Floor = per-frequency median of the baseline columns; e0 = their median above-floor band energy."""
     ok = cols.power[~cols.gap] if (~cols.gap).sum() >= 10 else cols.power
     floor = np.median(ok, axis=0)
-    b = Baseline(floor, 0.0, int(len(ok)), variant, int(nfft), created, resample=resample_mode(cfg))
+    b = Baseline(floor, 0.0, int(len(ok)), variant, int(nfft), created)
     tmp = contours(Columns(np.zeros(len(ok)), ok, np.zeros(len(ok), bool)), b, cfg, freqs)
     b.e0 = float(max(np.median(tmp.energy), _EPS))
     return b
@@ -461,7 +441,7 @@ class RawRing:
     def push(self, ks: np.ndarray, a: Optional[np.ndarray]) -> None:
         if a is None or not len(ks):
             return
-        # the grid went backwards: a restart (the same index is not: two samples can share one, dsp.resample packets)
+        # the grid went backwards: a restart (the same index is not: two samples can share one, FrontEnd)
         if self.chunks and ks[0] < self.chunks[-1][0][-1]:
             self.reset()
         self.chunks.append((ks, a))

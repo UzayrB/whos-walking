@@ -677,29 +677,23 @@ def test_a_room_measurement_someone_moved_in_is_not_called_busy(cfg, tmp_path):
 
 
 @pytest.mark.alternate_round
-@pytest.mark.parametrize("resample", ["grid", "packets"])
-def test_a_room_measurement_saved_by_the_older_app_is_offered(cfg, tmp_path, resample):
-    """state/baseline_live.json as the app wrote it before disturbed, d and resample existed (measured through the
-    150 Hz grid): with dsp.resample grid loaded at start-up as a still room's measurement and offered by Use last
-    measurement; with packets not offered (a level measured through the other front end does not fit), and the
-    other way round."""
-    cfg["dsp"]["resample"] = resample
+def test_a_room_measurement_saved_by_an_older_app_is_not_offered(cfg, tmp_path):
+    """state/baseline_live.json as an older app wrote it (no "resample": measured through the old 150 Hz
+    resampling) does not fit the chain and is not offered; one this app wrote ("resample": "packets", also the
+    15 Nov app's) is loaded at start-up and offered by Use last measurement."""
     n = int(cfg["dsp"]["nfft"]) // 2 + 1
-    with open(tmp_path / "baseline_live.json", "w", encoding="utf-8") as f:
-        json.dump({"floor": [1.0] * n, "e0": 0.7, "n_cols": 187, "variant": cfg["dsp"]["variant"],
-                   "nfft": int(cfg["dsp"]["nfft"]), "created": time.time() - 120}, f)
-    app = App(cfg, state_dir=str(tmp_path), log=RunLog(None), headless=True)
-    if resample == "packets":
+    old = {"floor": [1.0] * n, "e0": 0.7, "n_cols": 187, "variant": cfg["dsp"]["variant"],
+           "nfft": int(cfg["dsp"]["nfft"]), "created": time.time() - 120}
+    for doc in (old, dict(old, disturbed=False, d=0.0), dict(old, disturbed=False, d=0.0, resample="grid")):
+        (tmp_path / "baseline_live.json").write_text(json.dumps(doc))
+        app = App(cfg, state_dir=str(tmp_path), log=RunLog(None), headless=True)
         assert app.cached is None and "reuse_baseline" not in app.view(time.monotonic())["buttons"]
-        b = chain.Baseline(np.ones(n), 0.7, 187, cfg["dsp"]["variant"], int(cfg["dsp"]["nfft"]), time.time() - 120,
-                           resample="packets")
-        (tmp_path / "baseline_live.json").write_text(json.dumps(b.to_json()))
-        assert App(cfg, state_dir=str(tmp_path), log=RunLog(None), headless=True).cached is not None
-        cfg["dsp"]["resample"] = "grid"
-        assert App(cfg, state_dir=str(tmp_path), log=RunLog(None), headless=True).cached is None
-        return
+    (tmp_path / "baseline_live.json").write_text(json.dumps(dict(old, disturbed=False, d=0.0, resample="packets")))
+    app = App(cfg, state_dir=str(tmp_path), log=RunLog(None), headless=True)
     b = app.cached
-    assert b is not None and b.e0 == 0.7 and not b.disturbed and b.d == 0.0
+    assert b is not None and b.e0 == 0.7 and not b.disturbed and b.d == 0.0 and b.resample == "packets"
+    assert chain.Baseline(np.ones(n), 0.7, 187, cfg["dsp"]["variant"], int(cfg["dsp"]["nfft"])).to_json()[
+        "resample"] == "packets"                                   # (what this app writes)
     _type(app, [app.view(time.monotonic())["buttons"]["reuse_baseline"]["key"]])
     assert app.chain.baseline is b and app.quiet_e0 == 0.7
     assert app.view(time.monotonic())["hint"][0] == "Using the last measurement."
@@ -2522,13 +2516,12 @@ def test_a_model_without_a_how_sure_curve_plays_the_same(cfg, tmp_path, curve):
     newly trained one has none) loads and plays a close call the same, and the run log no longer mentions a
     curve."""
     m = models.Model("m1", ["speed"], np.zeros(1), np.ones(1), P=np.eye(1), lam=np.ones(1))
-    if curve:
-        m.cal_m, m.cal_p = np.array([0.0, 0.4]), np.array([0.55, 0.95])
-        m.cal2_m, m.cal2_p = np.array([0.0, 0.4]), np.array([0.5, 0.9])
     path = tmp_path / "model.json"
-    m.save(str(path))
+    doc = m.to_json()
+    if curve:                                                      # (an older model file's curves: never read)
+        doc.update(cal_m=[0.0, 0.4], cal_p=[0.55, 0.95], cal2_m=[0.0, 0.4], cal2_p=[0.5, 0.9])
+    path.write_text(json.dumps(doc))
     cfg["classifier"].update(kind="m1", model_path=str(path), second_look=True)
-    cfg["dsp"]["resample"] = "packets"                             # (the model_path model)
     log = tmp_path / "run.log"
     app = _app(cfg, tmp_path, log=str(log))
     assert app.model is not None and app.model.tau == pytest.approx(cfg["classifier"]["model_tau"])
