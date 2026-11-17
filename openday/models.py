@@ -324,10 +324,13 @@ class Tally:
         self.path = path
         self.doc = {"date": time.strftime("%Y-%m-%d"), "right": 0, "wrong": 0, "not_sure": 0, "visitors": {}}
         if path and os.path.exists(path):
-            with open(path, encoding="utf-8") as f:
-                d = json.load(f)
-            if d.get("date") == self.doc["date"]:
-                self.doc = d
+            try:
+                with open(path, encoding="utf-8") as f:
+                    d = json.load(f)
+                if d.get("date") == self.doc["date"] and isinstance(d.get("visitors"), dict):
+                    self.doc = d
+            except (OSError, ValueError, AttributeError):   # a damaged file: as if there were none
+                pass
 
     def new_visitor(self) -> int:
         idx = len(self.doc["visitors"]) + 1

@@ -166,6 +166,17 @@ def test_tally_has_no_names(tmp_path):
     assert set(d) == {"date", "right", "wrong", "not_sure", "visitors"} and list(d["visitors"]) == ["1"]
 
 
+@pytest.mark.parametrize("text", ["", "{", "[]", "null", '{"date": "x"}{"date": "x"}', '{"date": 1, "visitors": 5}'])
+def test_a_damaged_tally_file_is_ignored(tmp_path, text):
+    """A cut-short or doubled state/tally.json (power lost during a write, two apps at once) must not stop the app
+    from starting: the tally starts as if there were no file, and the next player rewrites it."""
+    p = tmp_path / "tally.json"
+    p.write_text(text, encoding="utf-8")
+    t = Tally(str(p))
+    assert t.doc["visitors"] == {} and t.new_visitor() == 1
+    assert list(json.load(open(p))["visitors"]) == ["1"]
+
+
 def test_every_measure_has_plain_words_and_the_new_scale_is_log():
     """Every measure a model can use belongs to one plain-word group of the screen's "Told apart by" line, and the new
     movement-strength measure is compared on a log scale like the old one."""
