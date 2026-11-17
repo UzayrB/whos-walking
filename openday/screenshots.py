@@ -80,7 +80,7 @@ def flow(cfg: dict) -> list:
     """FLOW for this configuration: how many learning walks each walks, and with classifier.second_look the close
     call's "walk once more" in place of a close-call answer."""
     nv = int(cfg["pools"]["n_enrol"])
-    nu = int(cfg["pools"].get("n_enrol_uzayr", nv))
+    nu = openday.uzayr_set(cfg, True)                     # (his set with a player present)
     out = []
     for stem, cap in FLOW:
         if stem == "06_learning_lerato_turn":

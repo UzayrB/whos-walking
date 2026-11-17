@@ -73,7 +73,8 @@ features:
 
 gait:                          # the thesis's single-link gait features (openday/walks.py), RX2 only
   keep_s: 12.0                 # pre-high-pass samples kept for them; at least walk.max_s + walk.guard_s + 1
-  max_window_s: 6.0            # computed from the click to the walk's arrival (t_arrive), at most this long
+  max_window_s: 9.0            # computed from the click to the walk's arrival (t_arrive), at most this long
+                               # (9 from 17 Nov, was 6: a slow walk that set off late was cut before the boards)
   min_window_s: 1.5            # shorter: the gait features are missing (NaN) and the model falls back on the rest
 
 classifier:
@@ -104,7 +105,12 @@ pools:
   n_visitor: 5                 # the most learning walks the visitor's pool keeps (at least n_enrol)
   n_enrol: 2                   # learning walks per visitor (2 each cost about 2-3 points against 3, ~45 s quicker)
   n_enrol_uzayr: 5             # Uzayr's own learning walks (at most n_uzayr; the same as n_enrol: as before). His walks
-                               # are kept and reused (uzayr_reuse_min), so 5 cost time only once every 10 minutes
+                               # are kept and reused (uzayr_reuse_min), so 5 cost time only once every 10 minutes.
+                               # 5 is his morning set: a set started with no player (Redo my walks on the welcome
+                               # screen, or his set walked again after Measure room with no player)
+  n_enrol_uzayr_day: 2         # Uzayr's set when it starts with a player present (Redo my walks in a game, or his set
+                               # due again after the visitor's walks): 2, like the visitor (at most n_enrol_uzayr;
+                               # only with uzayr_reuse_min > 0). Kept and reused like a set of 5
   enrol_order: visitor_first   # visitor_first (the visitor walks n_enrol times, then Uzayr) or alternate (Uzayr
                                # first, then taking turns: U, V, U, V)
   uzayr_reuse_min: 10          # Uzayr's learning walks are kept (memory only) and reused for the next player while

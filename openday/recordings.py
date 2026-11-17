@@ -213,7 +213,7 @@ def build_plan(script_path: str, cfg: dict, speed: float = 1.0) -> Plan:
             wait = max(3.0, float(cfg["ui"]["reading_s"]) * float(speed) + 1.5)
             keys.append((st.t_end + wait, "ctrl+u"))
             idle.take(st, wait + 0.7)
-            uz_left = int(cfg["pools"].get("n_enrol_uzayr", cfg["pools"]["n_enrol"]))   # his learning walks
+            uz_left = openday.uzayr_set(cfg, players > 0)  # his learning walks (2 with a player, 5 without)
             continue
         if act == "new_visitor":
             players += 1

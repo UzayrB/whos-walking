@@ -109,7 +109,8 @@ def test_no_visitor_name_on_disk_after_replay_shipped(cfg_shipped, tmp_path):
 @pytest.mark.needs_code
 def test_redo_waits_for_the_answer_at_any_speed(cfg_shipped):
     """The scripted Redo my walks (Ctrl+U) comes once the answer is up: ui.reading_s of real time is reading_s x
-    --speed of stream time, so the wait grows with the speed (at --speed 1 the plan is as before)."""
+    --speed of stream time, so the wait grows with the speed (at --speed 1 the plan is as before). With a player
+    there, the plan expects his set of two (pools.n_enrol_uzayr_day)."""
     p = os.path.join(openday.SCRIPTS, "demo_three_visitors.yaml")
     read = float(cfg_shipped["ui"]["reading_s"])
     with open(p, encoding="utf-8") as f:
@@ -120,7 +121,8 @@ def test_redo_waits_for_the_answer_at_any_speed(cfg_shipped):
         before = max(w["t_click"] for w in plan.walks if w["t_click"] < cu)   # the game walk before it
         after = [w for w in plan.walks if w["t_click"] > cu]
         assert cu - before >= gap + read * speed + 1.5, speed
-        assert [w["expect"] for w in after[:2]] == ["enrol_uzayr"] * 2 and plan.players == 3
+        assert [w["expect"] for w in after[:3]] == ["enrol_uzayr"] * 2 + [None] and plan.players == 3   # (his
+        # set with a player is two, pools.n_enrol_uzayr_day: the script's next P4 walks are game walks)
 
 
 @pytest.mark.needs_code

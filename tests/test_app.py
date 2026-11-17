@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 from matplotlib.backend_bases import MouseEvent
 
+import openday
 from openday import bench, chain, models, screen, walks
 from openday.app import (App, RunLog, AGAIN, BUSY, DECIDING, ENROL_UZAYR, ENROL_VISITOR, IDLE, NAME_ENTRY,
                          NEEDS_BASELINE, READY, RESULT, TILE, WALKING, _age_text, _times)
@@ -835,20 +836,20 @@ def test_a_measurement_no_quieter_keeps_todays_level_and_his_walks(cfg, tmp_path
 
 @pytest.mark.shipped
 def test_a_busier_measurement_halfway_through_his_walks_keeps_them(cfg, tmp_path):
-    """Measure room after two of his walks, the room busier: today's level stays, so his two walks count and he
-    walks only the rest."""
+    """Measure room after one of his walks (his set with a player: two), the room busier: today's level stays, so
+    his walk counts and he walks only the rest."""
     app = _day_app(cfg, tmp_path)
     level = _measure_room(app, 50.0, 0.036, 0)
     _player(app, "Le")
     t = 100.0
-    for _ in range(_n(cfg) + 2):                                   # the visitor's walks, then two of his
+    for _ in range(_n(cfg) + 1):                                   # the visitor's walks, then one of his
         _walk(app, t)
         t += 20.0
-    assert app.done["uzayr"] == 2 and app.state == ENROL_VISITOR
+    assert app.done["uzayr"] == 1 and app.state == ENROL_VISITOR
     _measure_room(app, t, 0.06, 1)
-    assert app.chain.baseline is level and app.done["uzayr"] == 2 and app.state == ENROL_VISITOR
+    assert app.chain.baseline is level and app.done["uzayr"] == 1 and app.state == ENROL_VISITOR
     _, who = _learn(app, t + 20.0)
-    assert who == ["uzayr"] * (_nu(cfg) - 2)
+    assert who == ["uzayr"] * (_nu(cfg) - 1)
 
 
 @pytest.mark.shipped
@@ -1072,8 +1073,15 @@ def _n(cfg):
 
 
 def _nu(cfg):
-    """Uzayr's learning walks (pools.n_enrol_uzayr; pools.n_enrol when it is not set)."""
-    return int(cfg["pools"].get("n_enrol_uzayr", _n(cfg)))
+    """Uzayr's learning walks in a set started with a player present (pools.n_enrol_uzayr_day, at most
+    n_enrol_uzayr; n_enrol_uzayr with uzayr_reuse_min 0)."""
+    return openday.uzayr_set(cfg, True)
+
+
+def _nu0(cfg):
+    """Uzayr's learning walks in a set started with no player: the morning set (pools.n_enrol_uzayr; pools.n_enrol
+    when it is not set)."""
+    return openday.uzayr_set(cfg, False)
 
 
 def _got(left):
@@ -1095,13 +1103,13 @@ def test_shipped_round_is_two_each_visitor_first(cfg):
 
 
 @pytest.mark.shipped
-@pytest.mark.parametrize("uz", ["as shipped", "as before"])
+@pytest.mark.parametrize("uz", ["as shipped", "five"])
 def test_visitor_walks_first_then_uzayr_then_the_game(cfg, tmp_path, uz):
-    """The visitor's walks, then Uzayr's own number (pools.n_enrol_uzayr, 5: "Walk 3 of 5: to the X, then stand
-    still." and a row of five dots); with it equal to pools.n_enrol ("as before") exactly the older round's words and
-    dots."""
-    if uz == "as before":
-        cfg["pools"]["n_enrol_uzayr"] = cfg["pools"]["n_enrol"]
+    """The visitor's walks, then Uzayr's set with a player (pools.n_enrol_uzayr_day): as shipped two, as many as the
+    visitor, so exactly the older round's words and dots; a set of another size with a player (five here) counts
+    them ("Walk 3 of 5: to the X, then stand still." and a row of five dots)."""
+    if uz == "five":
+        cfg["pools"]["n_enrol_uzayr_day"] = 5
     nu = _nu(cfg)
     app = _app(cfg, tmp_path, record=True)
     _player(app)
@@ -1114,22 +1122,22 @@ def test_visitor_walks_first_then_uzayr_then_the_game(cfg, tmp_path, uz):
     assert app.view(time.monotonic())["card"]["sub"] == "Got it! Once more."     # the card says what comes next
     _walk(app, 120.0)
     card = app.view(time.monotonic())["card"]
-    assert card["sub"] == "Got it! Now Uzayr walks " + ("twice." if uz == "as before" else "5 times.")
+    assert card["sub"] == "Got it! Now Uzayr walks " + ("twice." if uz == "as shipped" else "5 times.")
     assert card["big"] == "Uzayr's turn" and card["big_color"] == screen.UZAYR
     assert card["dots"]["rows"][0][2] == ["done", "done"]
     assert card["dots"]["rows"][1][2] == ["now"] + ["next"] * (nu - 1)
     assert app.view(time.monotonic())["hint"][0] == "Click Start walk, then walk to the X yourself."
     plain = "Stand on the back mark. Walk to the X, then stand still."
-    assert _now(app)["card"]["sub"] == (plain if uz == "as before" else "Walk 1 of 5: to the X, then stand still.")
+    assert _now(app)["card"]["sub"] == (plain if uz == "as shipped" else "Walk 1 of 5: to the X, then stand still.")
     _walk(app, 140.0)
     assert app.view(time.monotonic())["card"]["sub"] == _got(nu - 1)
-    if uz == "as shipped":
+    if uz == "five":
         assert _now(app)["card"]["sub"] == "Walk 2 of 5: to the X, then stand still."
         _walk(app, 160.0)
         assert _now(app)["card"]["sub"] == "Walk 3 of 5: to the X, then stand still."
         assert _now(app)["card"]["dots"]["rows"][1][2] == ["done", "done", "now", "next", "next"]
     t, who = _learn(app, 200.0)
-    assert who == ["uzayr"] * (nu - 1 - (uz == "as shipped")) and app.state == READY and app.visitor_ready
+    assert who == ["uzayr"] * (nu - 1 - (uz == "five")) and app.state == READY and app.visitor_ready
     assert app.view(time.monotonic())["card"]["sub"] == "Got you both! Now the guessing game."
     assert len(app.visitor) == 2 and len(app.uz_fresh) == nu
     labs = _labels(tmp_path)
@@ -1282,7 +1290,7 @@ def test_measure_room_halfway_through_his_walks_takes_both_again(cfg, tmp_path, 
     assert app.done["uzayr"] == 0 and len(app.uz_fresh) == 0 and app.last is None
     assert app._turn() == "uzayr" and app.state in (ENROL_VISITOR, ENROL_UZAYR)
     t, who = _learn(app, t)
-    assert who == ["uzayr"] * _nu(cfg)
+    assert who == ["uzayr"] * (_nu0(cfg) if when == "redo, no player" else _nu(cfg))   # (no player: the morning set)
     assert app._uz_reusable() and app._uz_note() == " Uzayr's walks: 1 min old."
     ids = [w["walk_id"] for w in app.uz_fresh.walks]
     _player(app, "Si")
@@ -1350,14 +1358,15 @@ def test_redo_my_walks_in_the_game(cfg, tmp_path):
 
 @pytest.mark.shipped
 def test_redo_my_walks_with_no_player(cfg, tmp_path):
-    """Before the next visitor: Uzayr's turns only (one row of dots), then WELCOME, and the next player's round
-    reuses them. Undo walk on his walk gives his turn back."""
+    """Before the next visitor: Uzayr's turns only (one row of dots; with no player his morning set,
+    pools.n_enrol_uzayr), then WELCOME, and the next player's round reuses them. Undo walk on his walk gives his
+    turn back."""
     app = _app(cfg, tmp_path)
     assert app.view(time.monotonic())["buttons"]["enrol_uzayr"]["look"] == "on"
     assert _now(app)["hint"][0] == "Click New player to start. Uzayr walks next round."
     _type(app, ["ctrl+u"])
     vm = app.view(time.monotonic())
-    nu = _nu(cfg)
+    nu = _nu0(cfg)
     assert app.state == ENROL_UZAYR and vm["card"]["dots"]["rows"] == [("Uzayr", screen.UZAYR,
                                                                          ["now"] + ["next"] * (nu - 1))]
     assert vm["card"]["sub"] == f"Uzayr walks {_times(nu)}, then on to the next player."
@@ -2533,8 +2542,9 @@ def test_a_model_without_a_how_sure_curve_plays_the_same(cfg, tmp_path, curve):
 @pytest.mark.shipped
 @pytest.mark.parametrize("player", [True, False])
 def test_redo_card_counts_down_his_five_walks(cfg, tmp_path, player):
-    """Redo my walks with his five: "Uzayr walks 5 times", then "4 more times", "3 more times", "twice more", "once
-    more" (in a game, or with no player)."""
+    """Redo my walks with no player, his morning set of five: "Uzayr walks 5 times", then "4 more times", "3 more
+    times", "twice more", "once more"; in a game his set of two (pools.n_enrol_uzayr_day): "Uzayr walks twice", then
+    "once more"."""
     app = _app(cfg, tmp_path)
     t = 100.0
     if player:
@@ -2547,19 +2557,27 @@ def test_redo_card_counts_down_his_five_walks(cfg, tmp_path, player):
         _walk(app, t)
         t += 20.0
     then = ", then the game carries on." if player else ", then on to the next player."
-    assert subs == [w + then for w in ("Uzayr walks 5 times", "Uzayr walks 4 more times", "Uzayr walks 3 more times",
-                                       "Uzayr walks twice more", "Uzayr walks once more")]
+    five = ("Uzayr walks 5 times", "Uzayr walks 4 more times", "Uzayr walks 3 more times", "Uzayr walks twice more",
+            "Uzayr walks once more")
+    assert subs == [w + then for w in (("Uzayr walks twice", "Uzayr walks once more") if player else five)]
 
 
 @pytest.mark.shipped
 def test_his_five_walks_are_reused_and_redone(cfg, tmp_path):
-    """pools.n_enrol_uzayr 5: his five walks are kept and reused by the next player within 10 minutes (only the
-    visitor walks), a whole set is needed (four do not count), and Redo my walks takes five again."""
-    assert _nu(cfg) == 5
+    """pools.n_enrol_uzayr 5, his morning set: Redo my walks with no player takes five, kept and reused by the next
+    players within 10 minutes (only the visitor walks); a whole set is needed (one of two undone does not count).
+    Redo my walks in a game takes his set with a player (pools.n_enrol_uzayr_day, 2), and so does a new player's
+    round when his set is not whole."""
+    assert (_nu0(cfg), _nu(cfg)) == (5, 2)
     app = _app(cfg, tmp_path, record=True)
-    _player(app, "Le")
+    _type(app, ["ctrl+u"])
     t, who = _learn(app, 100.0)
-    assert who == ["visitor"] * 2 + ["uzayr"] * 5 and len(app.uz_fresh) == 5
+    assert who == ["uzayr"] * 5 and len(app.uz_fresh) == 5 and app.state == IDLE
+    _player(app, "Le")
+    assert app.uz_reused and len(app.uz_fresh) == 5
+    assert app.view(time.monotonic())["card"]["dots"]["rows"][1] == ("Uzayr", screen.UZAYR, ["done"] * 5)
+    t, who = _learn(app, t)
+    assert who == ["visitor"] * 2
     t = _game(app, t)
     _age(app, float(cfg["pools"]["uzayr_reuse_min"]) - 1.0)
     _player(app, "Si")
@@ -2573,10 +2591,153 @@ def test_his_five_walks_are_reused_and_redone(cfg, tmp_path):
     assert pools[app.last["id"]]["u"] == ev["walk_ids"]
     _type(app, ["ctrl+u"])
     t, who = _learn(app, t)
-    assert who == ["uzayr"] * 5 and app.state == READY
-    _type(app, ["backspace"])                                      # one of his five undone: not a whole set
+    assert who == ["uzayr"] * 2 and app.state == READY
+    _type(app, ["backspace"])                                      # one of his two undone: not a whole set
     _type(app, ["ctrl+n", "y"])
     _player(app, "Mo")
     assert not app.uz_reused and app.done["uzayr"] == 0
     _, who = _learn(app, t + 20.0)
-    assert who == ["visitor"] * 2 + ["uzayr"] * 5
+    assert who == ["visitor"] * 2 + ["uzayr"] * 2
+
+
+# ---- his set: five with no player (the morning set), two with a player (pools.n_enrol_uzayr_day) --------------------
+
+PLAIN = "Stand on the back mark. Walk to the X, then stand still."
+
+
+@pytest.mark.shipped
+def test_the_morning_set_is_five(cfg, tmp_path):
+    """Redo my walks on the welcome screen with no player: his morning set of five (five dots, "Got it! 4 more
+    walks."); Measure room part-way through it, still with no player: his whole set again, five."""
+    app = _app(cfg, tmp_path)
+    _type(app, ["ctrl+u"])
+    card = _now(app)["card"]
+    assert app.n_enrol["uzayr"] == 5 and card["sub"] == "Uzayr walks 5 times, then on to the next player."
+    assert card["dots"]["rows"] == [("Uzayr", screen.UZAYR, ["now"] + ["next"] * 4)]
+    _walk(app, 100.0)
+    assert app.view(time.monotonic())["card"]["sub"] == "Got it! 4 more walks."
+    _measure(app)                                                  # (a clearly quieter room: his walk goes)
+    assert app.state == ENROL_UZAYR and app.done["uzayr"] == 0 and app.n_enrol["uzayr"] == 5
+    _, who = _learn(app, 120.0)
+    assert who == ["uzayr"] * 5 and app.state == IDLE and len(app.uz_fresh) == 5
+    assert app.view(time.monotonic())["card"]["sub"] == "Got it! Ready for the next player."
+
+
+@pytest.mark.shipped
+def test_redo_my_walks_in_a_game_is_two(cfg, tmp_path):
+    """Redo my walks in a game (a player is present): his set of two, "Uzayr walks twice, then the game carries
+    on." and two dots, "Got it! Once more.", then "Got it! Back to the game.". Undo walk right after it brings his
+    old set back whole (five, five dots)."""
+    app = _app(cfg, tmp_path, record=True)
+    _type(app, ["ctrl+u"])
+    t, _ = _learn(app, 100.0)                                      # the morning set: five
+    _player(app, "Le")
+    t, who = _learn(app, t)
+    assert who == ["visitor"] * 2
+    t = _game(app, t)
+    _type(app, ["ctrl+u", "backspace"])                            # by mistake: the old five back
+    assert app.state == READY and len(app.uz_fresh) == 5 and app.n_enrol["uzayr"] == 5
+    _type(app, ["ctrl+u"])
+    card = _now(app)["card"]
+    assert app.state == ENROL_UZAYR and app.n_enrol["uzayr"] == 2
+    assert card["sub"] == "Uzayr walks twice, then the game carries on."
+    assert card["dots"]["rows"][1] == ("Uzayr", screen.UZAYR, ["now", "next"])
+    _walk(app, t)
+    assert app.view(time.monotonic())["card"]["sub"] == "Got it! Once more."
+    assert _now(app)["card"]["sub"] == "Uzayr walks once more, then the game carries on."
+    _walk(app, t + 20.0)
+    assert app.state == READY and app.view(time.monotonic())["card"]["sub"] == "Got it! Back to the game."
+    assert len(app.uz_fresh) == 2 and _now(app)["card"]["sub"].startswith("Uzayr or Le")
+
+
+@pytest.mark.shipped
+def test_an_expired_set_for_a_new_player_is_two(cfg, tmp_path):
+    """His morning five expire (pools.uzayr_reuse_min): the next player's round asks for his set after the visitor's
+    two, and with a player it is two: "Got it! Now Uzayr walks twice.", the plain words (as many as the visitor's),
+    two dots, then "Got you both! Now the guessing game."."""
+    app = _app(cfg, tmp_path)
+    _type(app, ["ctrl+u"])
+    t, _ = _learn(app, 100.0)
+    _age(app, float(cfg["pools"]["uzayr_reuse_min"]) + 0.1)
+    _player(app, "Le")
+    assert not app.uz_reused and app.n_enrol["uzayr"] == 2
+    assert _now(app)["card"]["dots"]["rows"][1] == ("Uzayr", screen.UZAYR, ["next", "next"])
+    _walk(app, t)
+    _walk(app, t + 20.0)
+    card = app.view(time.monotonic())["card"]
+    assert card["sub"] == "Got it! Now Uzayr walks twice." and card["big"] == "Uzayr's turn"
+    assert _now(app)["card"]["sub"] == PLAIN
+    _walk(app, t + 40.0)
+    assert app.view(time.monotonic())["card"]["sub"] == "Got it! Once more."
+    _walk(app, t + 60.0)
+    assert app.state == READY and app.view(time.monotonic())["card"]["sub"] == "Got you both! Now the guessing game."
+    assert len(app.uz_fresh) == 2 and app._uz_reusable()
+
+
+@pytest.mark.shipped
+def test_undo_walk_inside_his_set_of_two(cfg, tmp_path):
+    """Undo walk on his first walk of two (a new player's round, and Redo my walks in a game): that turn is walked
+    again, and his set stays two."""
+    app = _app(cfg, tmp_path, record=True)
+    _player(app, "Le")
+    t = 100.0
+    for _ in range(3):                                             # the visitor's two, then his first
+        _walk(app, t)
+        t += 20.0
+    assert app.done["uzayr"] == 1
+    _type(app, ["backspace"])
+    assert app.state == ENROL_VISITOR and app._turn() == "uzayr" and app.done["uzayr"] == 0
+    assert len(app.uz_fresh) == 0 and _now(app)["card"]["dots"]["rows"][1][2] == ["now", "next"]
+    t, who = _learn(app, t)
+    assert who == ["uzayr"] * 2 and app.state == READY
+    t = _game(app, t)
+    _type(app, ["ctrl+u"])
+    _walk(app, t)
+    t += 20.0
+    assert app.state == ENROL_UZAYR and app.done["uzayr"] == 1
+    _type(app, ["backspace"])
+    assert app.state == ENROL_UZAYR and app.done["uzayr"] == 0 and app.n_enrol["uzayr"] == 2
+    assert _now(app)["card"]["sub"] == "Uzayr walks twice, then the game carries on."
+    _, who = _learn(app, t)
+    assert who == ["uzayr"] * 2 and app.state == READY and len(app.uz_fresh) == 2
+
+
+@pytest.mark.shipped
+def test_a_set_of_two_is_reused_and_the_bench_tools_rebuild_it(cfg, tmp_path):
+    """A set of two (taken with a player) is kept and reused by the next player like a set of five: only the visitor
+    walks, his row of two dots already done, "Got it! Now the guessing game."; it expires the same way. From the
+    recording the bench tools rebuild every game walk's pools: his two, reused, then his two from Redo my walks."""
+    reuse = float(cfg["pools"]["uzayr_reuse_min"])
+    app = _app(cfg, tmp_path, record=True)
+    _player(app, "Le")
+    t, who = _learn(app, 100.0)
+    assert who == ["visitor"] * 2 + ["uzayr"] * 2
+    first = [w["walk_id"] for w in app.uz_fresh.walks]
+    t = _game(app, t)
+    g1 = app.last["id"]
+    _age(app, reuse - 1.0)
+    _player(app, "Si")
+    assert app.uz_reused and [w["walk_id"] for w in app.uz_fresh.walks] == first and app.n_enrol["uzayr"] == 2
+    assert _now(app)["card"]["dots"]["rows"][1] == ("Uzayr", screen.UZAYR, ["done", "done"])
+    t, who = _learn(app, t)
+    assert who == ["visitor"] * 2
+    assert app.view(time.monotonic())["card"]["sub"] == "Got it! Now the guessing game."
+    t = _game(app, t)
+    g2 = app.last["id"]
+    _type(app, ["ctrl+u"])
+    t, who = _learn(app, t)
+    assert who == ["uzayr"] * 2
+    second = [w["walk_id"] for w in app.uz_fresh.walks]
+    t = _game(app, t)
+    g3 = app.last["id"]
+    ev = [e for e in _events(tmp_path) if e["kind"] == "uzayr_reused"]
+    assert len(ev) == 1 and ev[0]["walk_ids"] == first
+    rounds, pools = bench.bench_rounds(_events(tmp_path))
+    assert [pools[g]["u"] for g in (g1, g2, g3)] == [first, first, second]
+    assert all(len(pools[g]["v"]) == 2 for g in (g1, g2, g3))
+    assert rounds[1]["reused"] == first and rounds[1]["redo"] and not rounds[0]["redo"]
+    _age(app, reuse + 0.1)
+    _player(app, "Mo")
+    assert not app.uz_reused
+    _, who = _learn(app, t)
+    assert who == ["visitor"] * 2 + ["uzayr"] * 2

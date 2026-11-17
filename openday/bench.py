@@ -52,8 +52,8 @@ apart in a real room. Type the commands in the VS Code terminal, in the OpenDay 
     more (no coin flip; it is not one of the 20), and It was ... after that answer labels both walks.
  7. Quit, then score it:
       PYTHONDONTWRITEBYTECODE=1 /opt/anaconda3/bin/python3 -m openday eval --bench bench/{day}
-    The report scores the shipped model (with 5 + 5, the app's round 2 + 5 (the friend's 2, Uzayr's 5) and the
-    older 2 + 2) beside the nearest-centre rule (m0) and speed alone, and the second looks.
+    The report scores the shipped model (with 5 + 5, 2 + 5 (the friend's 2, Uzayr's morning set of 5) and 2 + 2
+    (Uzayr's set with a player)) beside the nearest-centre rule (m0) and speed alone, and the second looks.
 
 Someone else walked through? Cancel walk during the walk, Undo walk after it.
 Pass bar: the alternating pool (step 5) gets at least 18 of the 20 test walks right.
@@ -493,16 +493,17 @@ def run_bench(cfg: dict, d: str, log=print) -> str:
         L.append(f"| (b) alternating 5 + 5, shipped model {model.kind} | {bm['right']} | {bm['forced']} | "
                  f"{bm['speed_only']} | {bm['n']} |")
         nv = int(cfg["pools"]["n_enrol"])                  # the app's round: the visitor's n_enrol, Uzayr's own
-        nu = int(cfg["pools"].get("n_enrol_uzayr", nv))
+        nu = openday.uzayr_set(cfg, False)                 # (his morning set; with a player n_enrol_uzayr_day)
+        day = "Uzayr's set with a player" if openday.uzayr_set(cfg, True) == nv == 2 else "the older round"
         if nu == nv == 2:                                  # (Uzayr walks as many as the visitor: as before)
             L.append(f"| (b) 2 + 2 (the app's round), shipped model {model.kind} | {b2['right']} | "
                      f"{b2['forced']} | {b2['speed_only']} | {b2['n']} |")
         else:
             if len(ev_) >= nv and len(eu) >= nu:           # (enough of his walks in the pool)
                 ba = _score(cfg, {"uzayr": eu[:nu], "visitor": ev_[:nv]}, tests, model=model)
-                L.append(f"| (b) {nv} + {nu} (the app's round: the friend's {nv}, Uzayr's {nu}), shipped model "
+                L.append(f"| (b) {nv} + {nu} (the morning set: the friend's {nv}, Uzayr's {nu}), shipped model "
                          f"{model.kind} | {ba['right']} | {ba['forced']} | {ba['speed_only']} | {ba['n']} |")
-            L.append(f"| (b) 2 + 2 (the older round), shipped model {model.kind} | {b2['right']} | "
+            L.append(f"| (b) 2 + 2 ({day}), shipped model {model.kind} | {b2['right']} | "
                      f"{b2['forced']} | {b2['speed_only']} | {b2['n']} |")
         if stale:
             am = _score(cfg, {"uzayr": stale, "visitor": ev_}, tests, model=model)

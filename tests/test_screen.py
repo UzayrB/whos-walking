@@ -505,7 +505,9 @@ def test_the_second_look_and_his_five_walks_fit_on_screen(cfg, tmp_path, record,
     over "Too close to call: the same walker again.", Thinking on both walks, the answer "(from both walks)" with its tiles' "Both walks", "Walk 3 of 5: to the X, then stand
     still." with five dots, "Uzayr walks 4 more times": the card never talks to the operator, one bright button, the
     operator's line two lines at full size clear of the buttons, nothing overlapping (tests/overlap.py) at the
-    MacBook's full screen."""
+    MacBook's full screen. His five walks with a player beside the visitor's row (pools.n_enrol_uzayr_day 5 here; as
+    shipped five is the morning set, with no player, and a set with a player is two): the fullest learning card."""
+    cfg["pools"]["n_enrol_uzayr_day"] = 5
     sizes: dict = {}
     for name, app, vm in _tour_second_look(cfg, tmp_path, record):
         for text in _cards(vm):

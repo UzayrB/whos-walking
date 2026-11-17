@@ -57,6 +57,17 @@ def load_config(path: str = CONFIG) -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
+def uzayr_set(cfg: dict, player: bool) -> int:
+    """How many learning walks Uzayr's next set has, decided when the set starts: with a player present (and his
+    walks kept, pools.uzayr_reuse_min > 0) pools.n_enrol_uzayr_day (2; at most n_enrol_uzayr), else
+    pools.n_enrol_uzayr (5: the morning set, Redo my walks with no player; pools.n_enrol when not set)."""
+    p = cfg["pools"]
+    n = int(p.get("n_enrol_uzayr", p["n_enrol"]))
+    if player and float(p.get("uzayr_reuse_min", 0) or 0) > 0:
+        n = min(n, int(p.get("n_enrol_uzayr_day", n)))
+    return n
+
+
 def ensure_dirs() -> None:
     """Create OpenDay's writable folders (all inside OpenDay/)."""
     for d in (STATE, REPORTS, LOGS):

@@ -23,8 +23,9 @@ def cfg_shipped():
 @pytest.fixture
 def cfg(request, cfg_shipped):
     """The configuration a test gets as `cfg`. By default the shipped one with the nearest-centre rule (m0) and three
-    learning walks each (Uzayr too): no trained model needed. A test marked `shipped` gets the configuration as
-    shipped (the round of the day: Uzayr walks pools.n_enrol_uzayr, the visitor pools.n_enrol); one marked
+    learning walks each (Uzayr too, with a player or not): no trained model needed. A test marked `shipped` gets the
+    configuration as shipped (the round of the day: Uzayr walks pools.n_enrol_uzayr with no player and
+    n_enrol_uzayr_day with one, the visitor pools.n_enrol); one marked
     `alternate_round` gets the older alternating round: three learning walks each, Uzayr first, his walks wiped with
     each player (no Redo my walks). The second look (classifier.second_look) is as shipped in all three."""
     if request.node.get_closest_marker("shipped"):
@@ -34,7 +35,7 @@ def cfg(request, cfg_shipped):
         return cfg_shipped
     c = openday.load_config()
     c["classifier"]["kind"] = "m0"
-    c["pools"].update(n_enrol=3, n_enrol_uzayr=3)
+    c["pools"].update(n_enrol=3, n_enrol_uzayr=3, n_enrol_uzayr_day=3)
     return c
 
 

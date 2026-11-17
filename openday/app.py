@@ -34,6 +34,9 @@ takes his again at any time between walks (Undo walk, or Ctrl+U again, keeps the
 counts). New player and End game wipe the visitor only; Quit wipes everything.
 
 Uzayr walks pools.n_enrol_uzayr learning walks (5; his are kept for the next players), the visitor pools.n_enrol (2).
+A set of his that starts with a player present (Redo my walks in a game, or his set due again after the visitor's
+walks) is pools.n_enrol_uzayr_day walks (2); with no player (the morning set) it is n_enrol_uzayr
+(openday.uzayr_set). A kept set of either size is reused alike.
 
 The second look (classifier.second_look): a game walk that is a close call (its margin below the model's tau) names
 nobody yet. After Thinking ... the card says "Walk once more!" ("Too close to call: the same walker again.", state
@@ -151,8 +154,8 @@ class App:
         self.baseline_path = os.path.join(state_dir, "baseline_live.json") if baseline_cache else None
         self.visitor = models.Pool(cfg["pools"]["n_visitor"])             # memory only, never written
         self.tally = models.Tally(os.path.join(state_dir, "tally.json"))
-        n_v = int(cfg["pools"]["n_enrol"])                 # learning walks: the visitor's, and Uzayr's own (the same
-        self.n_enrol = {"visitor": n_v, "uzayr": int(cfg["pools"].get("n_enrol_uzayr", n_v))}   # when not set)
+        n_v = int(cfg["pools"]["n_enrol"])                 # learning walks: the visitor's, and Uzayr's own: the size
+        self.n_enrol = {"visitor": n_v, "uzayr": openday.uzayr_set(cfg, False)}   # of his current set (_drop_uzayr)
         self.uz_fresh = models.Pool(max(int(cfg["pools"]["n_uzayr"]), self.n_enrol["uzayr"]))   # his, memory only
         self.second_look = bool(cfg["classifier"].get("second_look", False))   # a close call: walk once more
         self.look2: Optional[dict] = None                  # the close call waiting for its second walk (state AGAIN)
@@ -543,8 +546,10 @@ class App:
         return self.reuse_min > 0
 
     def _drop_uzayr(self) -> None:
+        """His walks go; his next set is n_enrol_uzayr_day walks with a player present, else n_enrol_uzayr."""
         self.uz_fresh.clear()
         self.done["uzayr"] = 0
+        self.n_enrol["uzayr"] = openday.uzayr_set(self.cfg, self.name is not None)
 
     def _uz_age(self) -> Optional[float]:
         """Minutes since Uzayr's whole set of learning walks was taken (its oldest walk); None when he has no whole
@@ -606,7 +611,7 @@ class App:
         self._retire(self.last)
         self.last = None                                   # Undo walk now means his turns only
         self.uz_held = {"walks": [dict(w) for w in self.uz_fresh.walks], "done": self.done["uzayr"],
-                        "reused": self.uz_reused, "redo": self.uz_redo}
+                        "n": self.n_enrol["uzayr"], "reused": self.uz_reused, "redo": self.uz_redo}
         self._drop_uzayr()
         self.uz_enrolling, self.uz_redo = True, self.name is not None
         self.visitor_ready = False
@@ -624,7 +629,7 @@ class App:
         IDLE as before. The recording writes uzayr_kept with their walk ids (bench_rounds)."""
         held, self.uz_held = self.uz_held, None
         self.uz_fresh.walks = held["walks"]
-        self.done["uzayr"] = held["done"]
+        self.done["uzayr"], self.n_enrol["uzayr"] = held["done"], held["n"]
         self.uz_enrolling = False
         self.uz_reused, self.uz_redo = held["reused"] and self.name is not None, held["redo"] and self.name is not None
         self.visitor_ready = self._both_learnt()
@@ -1053,7 +1058,7 @@ class App:
         his whole set ends a Redo; Undo walk on his walk with no player, or in a Redo, brings his turn back (the
         card: "Uzayr walks once more, then ..."). The notices say what comes next (pools.enrol_order visitor_first,
         and Redo): "Got it! Once more." (or "Got it! 4 more walks.") between one person's walks, "Got it! Now
-        Uzayr walks 5 times." (pools.n_enrol_uzayr) at the hand-over; when the game starts "Got you both!" after
+        Uzayr walks twice." (the size of his set, n_enrol["uzayr"]) at the hand-over; when the game starts "Got you both!" after
         both walked, "Got it!" when his walks were reused (or redone in the game). The alternating order keeps a
         plain "Got it!" (the next turn is the other person's)."""
         if not rec["purpose"].startswith("enrol") or bool(rec.get("enrol_counted")) == (step > 0):

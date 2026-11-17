@@ -95,8 +95,8 @@ def test_bench_report_scores_the_shipped_model(cfg_shipped, tmp_path):
     assert f"shipped model {k}" in text
     assert f"tests: the {len(tests)} walks" in text                # (the second look took no test place)
     assert "1 test walks were close calls walked once more, each scored on both walks averaged" in text
-    assert f"| (b) 2 + 5 (the app's round: the friend's 2, Uzayr's 5), shipped model {k} |" in text
-    assert f"| (b) 2 + 2 (the older round), shipped model {k} |" in text and "2 + 2 (the app's round)" not in text
+    assert f"| (b) 2 + 5 (the morning set: the friend's 2, Uzayr's 5), shipped model {k} |" in text
+    assert f"| (b) 2 + 2 (Uzayr's set with a player), shipped model {k} |" in text and "app's round" not in text
     os.remove(out)
 
 
