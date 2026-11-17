@@ -189,9 +189,9 @@ lane:                          # the lane above the 3D picture: where the walker
                                # the room level. The marker moves with the Wi-Fi speed added up from the click, slows
                                # down near the X, and goes onto the X only when the walk ends
   show: true                   # false: no lane, and the screen exactly as before
-  length_m: 3.2                # the back mark to the X, in metres (section 1 of the README: at least 3 m; 3.2 m at
-                               # home). Set it if your back mark is further back; a wrong length only makes the marker
-                               # run a little ahead or behind, it still lands on the X when the walk ends
+  length_m: 2.5                # the back mark to the X, in metres (2.5 m at the Open Day bench; 3.2 m at home until
+                               # 17 Nov). Set it to your own distance; a wrong length only makes the marker run a
+                               # little ahead or behind, it still lands on the X when the walk ends
 
 keys:                          # each action's keys; the comment names its button
   start_walk: [space, pagedown, right, down]   # the big button (Measure room / Start walk / They've stopped /

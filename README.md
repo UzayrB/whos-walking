@@ -29,12 +29,12 @@ commands](#other-commands-run-from-this-folder)).
           |  about 30 cm
           X                STOP HERE and stand still        (taped X, A4 sign)
           |
-          |  at least 3 m (3.2 m worked at home); as far back as the room allows
+          |  2.5 m at the Open Day bench (3.2 m at home); not under 2.5 m
           |
           o                START HERE: the back mark        (the walker starts here; you stand here too)
 ```
 
-- **The two marks.** A taped **X** about 30 cm in front of the boards, and a **back mark** at least 3 m behind
+- **The two marks.** A taped **X** about 30 cm in front of the boards, and a **back mark** 2.5 m or more behind
   the X. Everyone uses the same two marks all session. Nothing is measured or typed in, and the screen never
   mentions metres.
 - **The boards.** Back to a wall or a corner if you can. During a walk nobody but the walker comes within about
@@ -368,7 +368,7 @@ value), and its speed was within 0.06 m/s of distance ÷ time on average.
   (the back mark) to the X, as a dot on a track that fills in behind it, with a few words beside the X: "Walking …",
   "Nearly there", "On the X". Between walks only START, the track and the X show, dim. The dot is the Speed tile's
   reading added up from the click (the distance walked), over the distance from the back mark to the X
-  (`lane.length_m` in `configs/openday.yaml`, 3.2 m). It moves only while the Wi-Fi sees someone moving, never goes
+  (`lane.length_m` in `configs/openday.yaml`, 2.5 m). It moves only while the Wi-Fi sees someone moving, never goes
   back, slows down from three quarters of the way, and goes onto the X only when the walk ends; it fades out 3 s
   later. A missed walk, **Cancel walk**, **Undo walk** and a lost signal leave it at rest. The dot is in the colour
   of whose learning turn it is (the visitor's orange, Uzayr's purple), yellow in the game. It shows how far you have
