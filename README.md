@@ -56,8 +56,7 @@ commands](#other-commands-run-from-this-folder)).
 
 **What the walker hears (say it aloud):** "Stand on START. When I say go, walk to the X and stand still on it
 until the answer appears. Then walk back." And for the round: "You walk twice so it learns your walk, then I walk
-twice if it needs me, then we play: it guesses which of us is walking. If it's too close to call, the same
-person walks once more."
+twice if it needs me, then we play: it guesses which of us is walking."
 
 ## 2. Start the app (one command)
 
@@ -86,8 +85,7 @@ To stop the app, click **Quit** (top right), then **Yes, quit**.
 | 6 | <img src="reports/screens/07_walking_learning.png" width="320"> | nothing (or **They've stopped**) | The walker goes to the X and stands still. The lane above the pictures shows them on their way, from START to the X, and says "On the X" when the walk ends ([The screen](#the-screen)). The walk ends by itself under two seconds after they stop. You can click **They've stopped** once they stand on the X. Do so for every walker when people move nearby ([Your routine at the stand](#your-routine-at-the-stand)); otherwise you don't need to. A click that comes after the walk has already ended does nothing: the big button stays grey for 3 s after every walk. |
 | 7 | <img src="reports/screens/14_game.png" width="320"> | **Start walk** | After the last learning walk: "Got you both! Now the guessing game." (or "Got it! Now the guessing game." when your walks were kept). You **or** the visitor walks; the crowd can choose. |
 | 8 | <img src="reports/screens/17_answer_lerato.png" width="320"> | **Next walk** | Under two seconds after they stop: who it was, how sure ("Fairly sure" or "Leaning"), and what told you apart ("Told apart by: speed and leg swing"). The tiles say which person each reading was "like". Nothing to click but **Next walk**: the visitors can see for themselves whether the guess was right. There is no score on screen. |
-| 9 | <img src="reports/screens/36_walk_once_more.png" width="320"> | **Start walk** | A close call names nobody yet: "Walk once more!" ("Too close to call: the same walker again."). The **same** person walks again from the back mark (in the home tests about 1 game walk in 10, and 1 in 5 in a disturbed room). |
-| 10 | <img src="reports/screens/37_answer_both_walks.png" width="320"> | **Next walk** | The answer from both walks together, marked "(from both walks)"; the tiles show what it was decided on, both walks' readings averaged (the row "Both walks"). It never asks a third time: if it is still close, it names the nearer person with "How sure: Close call" ([picture](reports/screens/19_close_call.png)). If the second walk is missed, the first walk's answer shows. |
+| 9 | <img src="reports/screens/19_close_call.png" width="320"> | **Next walk** | A close call: the answer still names the nearer person, and says "How sure: Close call". |
 
 When the visitor is done, **New player** starts the next one: the name box, then their two walks (and your two, if
 yours are 10 minutes old or more). The last visitor's name and walks are wiped. **End game** (top right) wipes them without
@@ -123,10 +121,6 @@ goes near the boards. Then they walk back to the start.
 - The game walks never change what it learned: it always compares with those learning walks (the visitor's 2,
   your 5 or 2). Why 5 in the morning: your walks are kept, so the extra three cost time only once, and more of them
   make your side steadier; during the day 2 keep the queue moving.
-- **Too close to call.** The card waits for the second walk: **Measure room** (even if it fails), a lost signal,
-  **New player** then **Cancel**, and **Keep going** in the Quit or End game box all come back to it; **Undo walk**
-  drops it (back to the game, nobody named), and so do **End game**, a new player and **Quit**. To switch "Walk
-  once more!" off: `second_look: false` in `configs/openday.yaml` (`classifier:`).
 
 **How long a round takes** (about 20 s per walk, there and back): the name and the visitor's two walks about
 1 minute, your two walks another 40 s when they are due (once every 10 minutes), then the game (about 20 s a
@@ -174,9 +168,7 @@ These replace the bottom line of the card for a few seconds. The big text and th
 | [Got it! Ready for the next player.](reports/screens/35_notice_redo_next_player.png) (green) | After **Redo my walks** with no player. | **New player** when the next visitor is ready. |
 | [Back to the game.](reports/screens/33_notice_redo_undone.png) (green) | **Undo walk** right after **Redo my walks**: your old walks are kept. | Carry on with the game. |
 | [Missed that one. Same turn again: start from the back mark.](reports/screens/10_notice_missed.png) (amber) | The app didn't see a walk: under 1.5 s of movement. It gives up 5 s after the click if almost nothing moved. | Walk again from the back mark, and click as they set off. |
-| [Walk cancelled.](reports/screens/12_notice_walk_cancelled.png) (amber) | You clicked **Cancel walk**. | Walk again (in learning, the same turn). During a second look it says "Walk cancelled. Same walker again." and goes back to "walk once more". |
-| Missed that one. The answer is from the first walk. (amber) | The second walk after "Walk once more!" wasn't seen. | Nothing: the first walk's answer shows. **Next walk**. |
-| Both walks removed. (amber) | **Undo walk** on an answer "(from both walks)". | Walk again. |
+| [Walk cancelled.](reports/screens/12_notice_walk_cancelled.png) (amber) | You clicked **Cancel walk**. | Walk again (in learning, the same turn). |
 | [Last walk removed.](reports/screens/11_notice_last_walk_removed.png) (amber) | You clicked **Undo walk**. | In learning, the same turn again. |
 | [Lost the signal. Walk again when the light is green.](reports/screens/20_notice_lost_signal.png) (red) | The receiver stopped or restarted during a walk. | See section 6 if it happens again. |
 
@@ -200,12 +192,12 @@ the top right, over the tiles: **Redo my walks** · **End game** · **Measure ro
 
 | Small button | What it does |
 |---|---|
-| **Undo walk** | Throws away the last walk. In learning (yours too), that turn is walked again. During a walk it reads **Cancel walk**. Right after **Redo my walks**, before you walk: keeps your old walks. On "Walk once more!": throws that walk away (back to the game, nobody named). On an answer "(from both walks)": throws both walks away. |
+| **Undo walk** | Throws away the last walk. In learning (yours too), that turn is walked again. During a walk it reads **Cancel walk**. Right after **Redo my walks**, before you walk: keeps your old walks. |
 | **New player** | The name box, then the visitor's two walks, then your two if yours are due (10 minutes old or more). |
 | **Use last measurement** | Set-up only (where Undo walk and New player sit later): takes today's room level, measured cleanly earlier today (also before a restart). Click it after every restart. |
-| **Redo my walks** | Between walks (no player, in a game, or on an answer): your learning walks again now, without a new player ("Uzayr's turn"): two with a player (the card says "Uzayr walks twice, then the game carries on."), five with no player (your morning set). Then the game carries on, and the next players use these walks. With no player it is the way to walk ahead. Dim while someone is learning or walking, on "Walk once more!", and with "No signal". By mistake? **Undo walk** before you walk keeps the old ones. |
+| **Redo my walks** | Between walks (no player, in a game, or on an answer): your learning walks again now, without a new player ("Uzayr's turn"): two with a player (the card says "Uzayr walks twice, then the game carries on."), five with no player (your morning set). Then the game carries on, and the next players use these walks. With no player it is the way to walk ahead. Dim while someone is learning or walking, and with "No signal". By mistake? **Undo walk** before you walk keeps the old ones. |
 | **End game** | Asks first, then wipes the player and goes back to "Who's walking?". Your walks are kept. |
-| **Measure room** | Measures the room again: 5 s to step back, then 30 s still. Only a clearly quieter room (a tenth or more) replaces today's level ("Quieter than earlier"): then your kept walks expire (the next round asks for them again), and if you clicked it part-way through your learning walks, you walk your whole set again straight after. Otherwise your line says "kept the earlier room level" (green) and nothing changes. On "Walk once more!" it comes back to that card afterwards (even if measuring fails): the second walk is still to come. |
+| **Measure room** | Measures the room again: 5 s to step back, then 30 s still. Only a clearly quieter room (a tenth or more) replaces today's level ("Quieter than earlier"): then your kept walks expire (the next round asks for them again), and if you clicked it part-way through your learning walks, you walk your whole set again straight after. Otherwise your line says "kept the earlier room level" (green) and nothing changes. |
 | **Details** | Shows the packet rate, the room level and how old your walks are on the bottom line. |
 | **Quit** | Asks first ("Yes, quit"), then the player is wiped and the app closes. |
 
@@ -258,7 +250,6 @@ Start walk.
 | The answer came while they were still walking | The walk ended early. Click **Undo walk** and walk again. |
 | The wrong person walked a learning turn | Click **Undo walk**: that turn is walked again, by the right person. |
 | You think your walks went wrong, or the room changed a lot | Click **Redo my walks** between walks: your walks again (two in a game). |
-| "Walk once more!" but the other person walks next by mistake | Click **Undo walk** on the answer: both walks go. Then walk again. |
 | You clicked **Redo my walks** by mistake | Click **Undo walk** before you walk: your old walks come back and the game carries on. |
 | A name was typed wrong | **Cancel** in the name box, or **New player** again later (the turns start again). |
 | The app is frozen | Click in the VS Code terminal and press Ctrl+C (or Cmd+Option+Esc, Python, Force Quit). Start it again (about 10 s), then **Use last measurement**. Then **New player** again: the visitor walks twice and you twice again (your kept walks go with a restart). |
@@ -308,8 +299,6 @@ per walk is final: both buttons go dim, the one you clicked gets a tick
    you leave the back mark and stops it as you stand still on the X. Write the times down in order.
 5. Optional: a round with a friend. **New player**, the four learning walks (just **Start walk**: your friend
    twice, then you twice), a few game walks; after each answer click **It was ...** for who really walked.
-   On "Walk once more!" the same person walks once more; the **It was ...** click after the answer labels both
-   walks.
    Optional, but it lets the recording be scored. Then **New player** again (within 10 minutes): only your friend
    walks, twice, and the game starts. Once, in a game, click **Redo my walks** and walk your two turns. (The
    recording notes which of your walks each round reused, so it can still be scored.)
@@ -330,9 +319,8 @@ can be read directly.
 ## What it is
 
 Two ESP32 boards, no camera. A visitor walks towards the boards twice, then Uzayr twice (five in the morning; his
-walks are kept for 10 minutes, so usually only the visitor walks). A game walk that is too close to call is walked
-once more, and the answer comes from both walks. After that, the screen tells them apart from the radio echo alone.
-Every walk also gives a walking speed.
+walks are kept for 10 minutes, so usually only the visitor walks). After that, the screen tells them apart from the
+radio echo alone. Every walk also gives a walking speed.
 
 The decision model (`state/model/`, retrained 15 Nov on the radio packets as they come) never saw Uzayr or any
 visitor: it
@@ -391,16 +379,14 @@ value), and its speed was within 0.06 m/s of distance ÷ time on average.
 - **Right:** Speed, Echo (how strongly the walk stirred the signal: its loudest moment over the empty room, in dB;
   only a picture, no answer uses it), Swing (leg swing) and Bounce. Speed updates live during a walk. Afterwards each
   tile shows the last walk (while learning, in the colour of whose turn it was) against Uzayr's average and the
-  visitor's, and which one it was "like". On an answer from both walks the tiles show both walks' readings averaged
-  (the row "Both walks").
+  visitor's, and which one it was "like".
 - **Buttons:** your instructions on the left, then the small buttons, then the big one (section 4).
 - **Bottom card, for the crowd:** what to do ("Lerato's turn", "Walk to the X", with a small line under it), then
   the answer in the person's colour, "How sure" and what told the two apart. While learning, dots in two rows, the
   visitor's on top, then yours (filled = done, outlined = now, faint = still to come; yours already filled when your
   walks are kept). "How sure" is a word, not a number: "Fairly sure" for a clear answer (its margin at least 4
-  times the model's close-call line, 0.046), else "Leaning". A close call (its margin below the line) names nobody
-  yet: "Walk once more!", and the answer then comes from both walks, marked "(from both walks)". Still close after
-  both walks, it names the nearer person with "Close call". There is no score on screen.
+  times the model's close-call line, 0.046), else "Leaning". A close call (its margin below the line) still names
+  the nearer person, with "Close call". There is no score on screen.
 - **Red RECORDING box** (top line, middle): raw radio data is being saved. Home tests and bench sessions only,
   never on Open Day.
 - **Long names** are shortened where room is short, never drawn over anything: the card, the dots, the tiles
@@ -441,15 +427,14 @@ PYTHONDONTWRITEBYTECODE=1 /opt/anaconda3/bin/python3 -m pytest -p no:cacheprovid
   recording; this is what `run_solo_test.command` uses).
 - **A recording** (`--record`) saves, for each run, the raw radio data (`bench_RX.bin`) and the app's events
   (`events.jsonl`): every walk and click, who walked (a learning walk by its turn, a game walk by an **It was ...**
-  click; a game walk with no click is left out of the scoring), which of your walks each round reused or redid,
-  and which walk was the second look of which close call. **Measure room** is always needed in a recording (an
+  click; a game walk with no click is left out of the scoring), and which of your walks each round reused or
+  redid. **Measure room** is always needed in a recording (an
   old measurement is never reused, and a recording's never becomes today's room level).
 - **`eval --bench`** scores a two-person session recorded as `bench-checklist` describes, into
   `reports/bench_<folder>.md` (laptop only). The first line is PASS or FAIL: the simple rule (m0) with the 5 + 5
   alternating learning walks, 18 of the 20 test walks needed. Then the shipped model with those 5 + 5, with 2 + 5
   (the visitor's 2, your morning 5) and with 2 + 2 (your set with a player), the pool from
-  before the break, whether the two walkers' speeds overlap, and the second looks (a close call walked once more is
-  scored on both walks averaged, as the round showed it).
+  before the break, and whether the two walkers' speeds overlap.
 - **`bench-check`** takes one run folder or a folder of runs, re-runs every recorded walk through the live chain
   and prints how each ended (live and offline), the false walks in the quiet spans between walks, the room level
   over the run, and which rounds reused or redid your walks; `--max-s S` tries another walk limit. It prints only
@@ -475,7 +460,9 @@ in every round, and there is no Redo my walks). Why 10: a precaution: the two-pe
 about 10 minutes old. The age is checked at **New player**, so a game can run on walks up to about 13-15 minutes old.
 If you change it, change "10 minutes" in this guide too and run `screens`.
 
-**The second look** is `second_look` under `classifier:` (true; false = one walk per answer).
+**The second look** (`second_look` under `classifier:`) is off: one walk per answer. With `true`, a close call
+names nobody yet: the card says "Walk once more!", the same person walks again, and the answer comes from both
+walks.
 
 ## Files
 

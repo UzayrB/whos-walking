@@ -1099,7 +1099,7 @@ def test_shipped_round_is_two_each_visitor_first(cfg):
     assert (cfg["pools"]["n_enrol"], cfg["pools"]["enrol_order"]) == (2, "visitor_first")
     assert cfg["pools"]["n_enrol_uzayr"] == 5 <= cfg["pools"]["n_uzayr"]   # his own walks: kept, so more of them
     assert cfg["pools"]["uzayr_reuse_min"] == 10                   # (15 Nov: his walks drift within a run)
-    assert cfg["classifier"]["second_look"] is True
+    assert cfg["classifier"]["second_look"] is False               # (18 Nov: one walk per answer)
 
 
 @pytest.mark.shipped
@@ -2158,7 +2158,7 @@ def _to_close_call(app, t=100.0):
     return t + 20.0, asked
 
 
-@pytest.mark.shipped
+@pytest.mark.second_look
 def test_a_close_call_walks_once_more_and_answers_from_both_walks(cfg, tmp_path):
     """A game walk below tau names nobody: "Walk once more!" ("Too close to call: the same walker again."), Start
     walk is the next step (Undo walk can throw it away; no It was ..., no Redo my walks). The second walk's answer is
@@ -2230,7 +2230,7 @@ def test_a_close_call_walks_once_more_and_answers_from_both_walks(cfg, tmp_path)
     assert gone[-2:] == [second["id"], first["id"]]
 
 
-@pytest.mark.shipped
+@pytest.mark.second_look
 def test_second_look_at_most_once_per_game_walk(cfg, tmp_path):
     """Still a close call on both walks: the answer names the nearer person anyway (no third walk); the next game
     walk can ask again."""
@@ -2247,7 +2247,7 @@ def test_second_look_at_most_once_per_game_walk(cfg, tmp_path):
     assert app.state == AGAIN and "second_of" not in app.last
 
 
-@pytest.mark.shipped
+@pytest.mark.second_look
 def test_second_look_cancel_returns_to_walk_once_more_and_undo_drops_the_close_call(cfg, tmp_path):
     """Cancel walk (or the clicker's back key, or a lost signal) during the second walk: back to "walk once more";
     Undo walk there throws the close call away: back to the game, nothing named."""
@@ -2276,7 +2276,7 @@ def test_second_look_cancel_returns_to_walk_once_more_and_undo_drops_the_close_c
     assert "second_of" not in app.last and not app.last.get("both")
 
 
-@pytest.mark.shipped
+@pytest.mark.second_look
 def test_a_missed_second_look_leaves_the_first_walks_answer(cfg, tmp_path):
     """The second walk not seen: the first walk alone decides (its own answer, its own How sure), and in a
     recording It was ... labels that first walk."""
@@ -2300,7 +2300,7 @@ def test_a_missed_second_look_leaves_the_first_walks_answer(cfg, tmp_path):
     assert app.view(time.monotonic())["card"]["sub"] == "Last walk removed."
 
 
-@pytest.mark.shipped
+@pytest.mark.second_look
 def test_walk_once_more_and_the_other_buttons(cfg, tmp_path):
     """On "walk once more": Redo my walks is refused and the clicker's back key keeps it (above)."""
     app = _app(cfg, tmp_path)
@@ -2349,7 +2349,7 @@ BACK = ["measure room", "measure room fails", "measure room, receiver silent", "
         "Quit box: Keep going"]
 
 
-@pytest.mark.shipped
+@pytest.mark.second_look
 @pytest.mark.parametrize("how", BACK)
 def test_every_way_off_walk_once_more_comes_back_to_it(cfg, tmp_path, how):
     """The close call waits for its second walk on "Walk once more!" only, and every fallback comes back to that
@@ -2424,7 +2424,7 @@ def test_every_way_off_walk_once_more_comes_back_to_it(cfg, tmp_path, how):
 DROP = ["Undo walk", "End game", "new player", "Quit"]
 
 
-@pytest.mark.shipped
+@pytest.mark.second_look
 @pytest.mark.parametrize("how", DROP)
 def test_the_ways_that_drop_a_close_call(cfg, tmp_path, how):
     """Undo walk on "Walk once more!" throws the close call away ("Last walk removed.", back to the game); End game,
@@ -2460,7 +2460,7 @@ def test_the_ways_that_drop_a_close_call(cfg, tmp_path, how):
     assert "second_of" not in [e for e in _events(tmp_path) if e["kind"] == "walk"][-1]
 
 
-@pytest.mark.shipped
+@pytest.mark.second_look
 def test_a_second_look_starts_only_from_walk_once_more(cfg, tmp_path):
     """A close call left waiting where it should not be (a state the fallbacks never reach now): a game walk from
     there is a new walk, not its second look, and the close call goes (logged); "Walk once more!" without its close
@@ -2501,7 +2501,7 @@ def test_second_look_off_is_one_walk_per_answer(cfg, tmp_path):
         assert not {"second_look", "second_of", "alone"} & set(e), e
 
 
-@pytest.mark.shipped
+@pytest.mark.second_look
 def test_a_second_look_started_while_thinking_is_still_the_second_look(cfg, tmp_path):
     """(A replay has no after-walk lock:) Start walk during Thinking after a close call is its second walk."""
     app = _app(cfg, tmp_path)

@@ -199,7 +199,7 @@ def test_a_missed_walk_a_cancel_and_a_lost_signal_never_reach_the_x(cfg, tmp_pat
     assert app.walk is None and _lv(app)["frac"] is None
 
 
-@pytest.mark.shipped
+@pytest.mark.second_look
 def test_the_second_look_and_a_free_walk_each_get_their_own_lane(cfg, tmp_path):
     """A close call: "walk once more", and the second walk starts from START and ends on the X; a free walk (no
     player) too, in the last walk's yellow; a learning walk of Uzayr's in his colour."""

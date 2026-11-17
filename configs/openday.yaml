@@ -85,12 +85,13 @@ classifier:
                                # (with second_look: after one more walk), and the log counts it; set so that about 15 %
                                # of the home tests' decisions fall below it. How sure: "Leaning" from it, "Fairly sure"
                                # from 4 times it
-  second_look: true            # a GAME walk below the close-call line (model_tau; m0: tau) names nobody yet: the card
-                               # says "Walk once more!" (too close to call) and the same walker walks again; the answer
-                               # is then decided on both walks (their readings averaged) and says "(from both walks)".
-                               # At most one extra walk per game walk; if the second walk is missed, the first walk
-                               # alone decides. Home tests: about 1 game walk in 7, +1.5 to 2.5 points
-                               # false = one walk per answer, as before
+  second_look: false           # false (from 18 Nov, Uzayr's choice): one walk per answer; a close call names the
+                               # nearer person and How sure says "Close call".
+                               # true: a GAME walk below the close-call line (model_tau; m0: tau) names nobody yet: the
+                               # card says "Walk once more!" (too close to call) and the same walker walks again; the
+                               # answer is then decided on both walks (their readings averaged) and says "(from both
+                               # walks)". At most one extra walk per game walk; if the second walk is missed, the first
+                               # walk alone decides. Home tests: about 1 game walk in 7, +1.5 to 2.5 points
   use: [speed, steps, swing, bounce]   # m0: features the decision uses
   tau: 0.08                    # fitted, m0 only (no trained model): a margin below this is a close call
                                # (logged; the answer still names the nearer person)

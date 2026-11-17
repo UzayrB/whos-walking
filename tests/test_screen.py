@@ -497,7 +497,7 @@ def _tour_second_look(cfg, tmp_path, record):
     return out
 
 
-@pytest.mark.shipped
+@pytest.mark.second_look
 @pytest.mark.parametrize("record", [False, True])
 @pytest.mark.parametrize("size", [(14.70, 9.24), (16, 9), (14.7, 9.56)])    # the MacBook full screen first
 def test_the_second_look_and_his_five_walks_fit_on_screen(cfg, tmp_path, record, size):
@@ -930,7 +930,7 @@ COMMON = ["04_welcome", "05_name_box", "06_learning_lerato_turn", "07_walking_le
           "23_no_signal", "24_recording_learning", "25_recording_answer", "26_recording_noted", "27_recording_speed",
           "28_reuse_learning", "29_notice_reuse_got_it", "30_walks_expire_soon", "31_redo_my_walks",
           "32_notice_now_uzayr_walks", "33_notice_redo_undone", "34_notice_redo_back_to_game",
-          "35_notice_redo_next_player", "36_walk_once_more", "37_answer_both_walks", "flow", "lights"]
+          "35_notice_redo_next_player", "flow", "lights"]     # (36, 37: only with classifier.second_look)
 FIRST = ["01_setup", "02_measuring_countdown", "03_measuring"]
 
 

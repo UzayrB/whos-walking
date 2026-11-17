@@ -27,7 +27,11 @@ def cfg(request, cfg_shipped):
     configuration as shipped (the round of the day: Uzayr walks pools.n_enrol_uzayr with no player and
     n_enrol_uzayr_day with one, the visitor pools.n_enrol); one marked
     `alternate_round` gets the older alternating round: three learning walks each, Uzayr first, his walks wiped with
-    each player (no Redo my walks). The second look (classifier.second_look) is as shipped in all three."""
+    each player (no Redo my walks). The second look (classifier.second_look) is as shipped (off) in all three; a test
+    marked `second_look` gets the configuration as shipped with it on."""
+    if request.node.get_closest_marker("second_look"):
+        cfg_shipped["classifier"]["second_look"] = True
+        return cfg_shipped
     if request.node.get_closest_marker("shipped"):
         return cfg_shipped
     if request.node.get_closest_marker("alternate_round"):
@@ -61,13 +65,14 @@ def _logs_in_tmp(_test_logs, monkeypatch):
 @pytest.hookimpl(tryfirst=True)
 def pytest_configure(config):
     """Temporary files stay inside OpenDay/ whatever directory pytest is run from (nothing is written outside it).
-    Two markers for tests that need what only the owner's laptop has, and two that choose the configuration a
+    Two markers for tests that need what only the owner's laptop has, and three that choose the configuration a
     test's `cfg` is."""
     config.option.basetemp = os.path.join(openday.OPENDAY, ".pytest_tmp")
     config.addinivalue_line("markers", "needs_code: needs the thesis code and recordings in ../Code and the "
                                        "participant code list configs/people.local.yaml")
     config.addinivalue_line("markers", "needs_model: needs the trained model in state/model")
     config.addinivalue_line("markers", "shipped: cfg is the configuration as shipped")
+    config.addinivalue_line("markers", "second_look: cfg is the configuration as shipped, the second look on")
     config.addinivalue_line("markers", "alternate_round: cfg is the shipped configuration with the older "
                                        "alternating round (pools.enrol_order alternate)")
 
