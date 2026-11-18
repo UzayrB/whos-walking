@@ -643,8 +643,8 @@ def test_the_lines_after_measure_room_fit(cfg, tmp_path, record, size):
 @pytest.mark.shipped
 @pytest.mark.parametrize("size", [(14.70, 9.24), (16, 9)])
 def test_the_lines_when_todays_level_is_kept_fit(cfg, tmp_path, size):
-    """Measure room not clearly quieter than today's level (on the day): "Busier than earlier: kept the earlier room
-    level 26.31." and its two siblings, "Quieter than earlier: room level 26.31." and a measurement dropped with
+    """Measure room not clearly quieter than today's level (on the day): "Busier than earlier (99.99 now): kept the
+    earlier room level 26.31." and its two siblings, "Quieter than earlier: room level 26.31." and a measurement dropped with
     today's level in use, at full size in one line or split after the ":", clear of the buttons, on the MacBook's
     full screen and a 16:9 screen."""
     app = _app(cfg, tmp_path)
@@ -658,6 +658,7 @@ def test_the_lines_when_todays_level_is_kept_fit(cfg, tmp_path, size):
         app.prev = app.state
         app._keep_level(b, level, float(cfg["baseline"]["recheck_ratio"]))
         vm = app.view(time.monotonic())
+        why += "" if b.disturbed else f" ({b.e0:.2f} now)"       # (this measurement's own level, in brackets)
         assert vm["hint"][0] == f"{why}: kept the earlier room level 26.31."
         assert _drawn_hint(app, vm, size) in ([vm["hint"][0]], [f"{why}:", "kept the earlier room level 26.31."])
         assert app.screen.hint.get_fontsize() == pytest.approx(full) and app.chain.baseline is level

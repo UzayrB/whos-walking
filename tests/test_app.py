@@ -824,7 +824,8 @@ def test_a_measurement_no_quieter_keeps_todays_level_and_his_walks(cfg, tmp_path
     assert app.chain.baseline is level and _saved_e0(tmp_path) == level.e0
     assert app.state == RESULT
     assert _now(app)["hint"][0].startswith("Click Next walk")
-    assert app.view(time.monotonic())["hint"] == (f"{why}: kept the earlier room level {level.e0:.2f}.",
+    now = "" if moved else f" ({b.e0:.2f} now)"                    # (this measurement's own level, in brackets)
+    assert app.view(time.monotonic())["hint"] == (f"{why}{now}: kept the earlier room level {level.e0:.2f}.",
                                                   screen.STATUS["green"])
     assert _light(app) == ("green", "Ready") and app.hint_ev[3] is None
     assert app._uz_reusable() and app._uz_note().startswith(" Uzayr's walks: ")
@@ -883,10 +884,10 @@ def test_after_a_restart_a_busier_measurement_takes_todays_level_from_file(cfg, 
     level = _measure_room(a, 50.0, 1.0, 0)
     a.close()
     a = _day_app(cfg, tmp_path)
-    _measure_room(a, 50.0, 3.0, 1)
+    b = _measure_room(a, 50.0, 3.0, 1)
     assert a.state == IDLE and a.chain.baseline.e0 == level.e0 and _saved_e0(tmp_path) == level.e0
-    assert a.view(time.monotonic())["hint"] == (f"Busier than earlier: kept the earlier room level {level.e0:.2f}.",
-                                                screen.STATUS["green"])
+    assert a.view(time.monotonic())["hint"] == (
+        f"Busier than earlier ({b.e0:.2f} now): kept the earlier room level {level.e0:.2f}.", screen.STATUS["green"])
     _measure_room(a, 200.0, 1.0, 2, moved=True)
     assert a.chain.baseline.e0 == level.e0 and a.view(time.monotonic())["hint"][0].startswith("Someone moved: kept")
     a.close()

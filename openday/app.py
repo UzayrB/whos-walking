@@ -745,7 +745,8 @@ class App:
             self._set_baseline(level, "reused")
         else:
             self._back_from_measuring()
-        self._hint(f"{why}: kept the earlier room level {level.e0:.2f}.", "green", 8.0)
+        now = "" if b.disturbed else f" ({b.e0:.2f} now)"   # (this measurement's own level, beside the one kept)
+        self._hint(f"{why}{now}: kept the earlier room level {level.e0:.2f}.", "green", 8.0)
 
     def _back_from_measuring(self) -> None:
         """Measure room is done (or Use last measurement): back to where it was clicked."""
