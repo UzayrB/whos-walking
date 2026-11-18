@@ -14,9 +14,9 @@ from helpers import HOP, cols
 
 def test_walk_starts_on_the_click(cfg):
     w = WalkWindow(cfg, 1.0, 10.0, HOP)
-    w.add(cols([100.0] * 40 + [1.0] * 200))                        # 2.1 s of motion, the first 1 s before the click
+    w.add(cols([100.0] * 30 + [1.0] * 200))                        # 1.6 s of motion, the first 1 s before the click
     assert w.t[0] >= 1.0
-    assert not w.seen and w.ended and w.reason == "limit"          # only ~1.1 s after the click: no walk
+    assert not w.seen and w.ended and w.reason == "limit"          # only ~0.6 s after the click: no walk
 
 
 def test_walk_ends_on_quiet(cfg):
@@ -37,7 +37,7 @@ def test_walk_hard_limit(cfg):
 
 def test_no_walk_when_too_short(cfg):
     w = WalkWindow(cfg, 0.0, 10.0, HOP)
-    w.add(cols([100.0] * 20 + [1.0] * 200))                        # about 1 s of motion
+    w.add(cols([100.0] * 12 + [1.0] * 200))                        # about 0.6 s of motion (walk.min_active_s 1.0)
     assert w.ended and not w.seen
 
 

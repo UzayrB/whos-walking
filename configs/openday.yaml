@@ -40,10 +40,13 @@ dsp:                           # the samples: the packets as they come (no resam
   nfft: 128                    # fitted (64 or 128)
   band_hz: [3.0, 70.0]         # contours and energy use this band
   floor_scale: 1.0             # above-floor power = clip(power - floor_scale * floor, 0)
-  active_k: 6.0                # a column is active when energy > active_k * baseline median energy
+  active_k: 4.0                # a column is active when energy > active_k * baseline median energy (4 from
+                               # 18 Nov, was 6: the Open Day hall's room level is about twice home's, and
+                               # slow walkers were missed)
 
 walk:                          # a walk ends on the first of: stopped, arrived, operator, nothing, limit
-  min_active_s: 1.5            # fewer active seconds than this: not seen ("Missed that one.")
+  min_active_s: 1.0            # fewer active seconds than this: not seen ("Missed that one."); 1.0 from
+                               # 18 Nov, was 1.5 (the hall, and a 2.5 m path)
   quiet_s: 0.5                 # "stopped": this much quiet (once min_active_s has been seen)
   arrive_min_x: 80.0           # "arrived": once seen and the smoothed energy has peaked at >= this x the room's
   arrive_hold_s: 0.5           # ... median energy (e0), no new peak for this long; the peak is the arrival (t_arrive)

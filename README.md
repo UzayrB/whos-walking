@@ -167,7 +167,7 @@ These replace the bottom line of the card for a few seconds. The big text and th
 | [Got it! Back to the game.](reports/screens/34_notice_redo_back_to_game.png) (green) | After **Redo my walks** in a game: your last walk was seen. | Carry on with the game. |
 | [Got it! Ready for the next player.](reports/screens/35_notice_redo_next_player.png) (green) | After **Redo my walks** with no player. | **New player** when the next visitor is ready. |
 | [Back to the game.](reports/screens/33_notice_redo_undone.png) (green) | **Undo walk** right after **Redo my walks**: your old walks are kept. | Carry on with the game. |
-| [Missed that one. Same turn again: start from the back mark.](reports/screens/10_notice_missed.png) (amber) | The app didn't see a walk: under 1.5 s of movement. It gives up 5 s after the click if almost nothing moved. | Walk again from the back mark, and click as they set off. |
+| [Missed that one. Same turn again: start from the back mark.](reports/screens/10_notice_missed.png) (amber) | The app didn't see a walk: under 1 s of movement. It gives up 5 s after the click if almost nothing moved. | Walk again from the back mark, and click as they set off. |
 | [Walk cancelled.](reports/screens/12_notice_walk_cancelled.png) (amber) | You clicked **Cancel walk**. | Walk again (in learning, the same turn). |
 | [Last walk removed.](reports/screens/11_notice_last_walk_removed.png) (amber) | You clicked **Undo walk**. | In learning, the same turn again. |
 | [Lost the signal. Walk again when the light is green.](reports/screens/20_notice_lost_signal.png) (red) | The receiver stopped or restarted during a walk. | See section 6 if it happens again. |
