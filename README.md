@@ -4,6 +4,8 @@ Uzayr's EEE4022S final-year project demo for UCT Open Day (18 November 2026). Tw
 state information (no camera) tell a visitor's walk from Uzayr's, and show the walking speed. How it works: [What it
 is](#what-it-is).
 
+**Status:** Open Day is over. This is the app as it ran on the day, kept as a record; nothing more is planned.
+
 This is the guide for Open Day and for the tests at home. You start the app with one command, and after that
 everything is done with the wireless mouse. The big button at the bottom right never moves, so leave the pointer on
 it and click from the back mark. **The bright button is always the next step.**
@@ -394,7 +396,7 @@ value), and its speed was within 0.06 m/s of distance ÷ time on average.
   "Nomvula"), and one very long name is cut with a full stop ("Bartholomew" gives "Bartholo.", the same
   everywhere). The screen is laid out for the MacBook's own screen, full screen or in a window.
 
-Every screen is in `reports/screens/` (01 to 37, plus `flow.png` and `lights.png`). They are made by the
+Every screen is in `reports/screens/` (01 to 35, plus `flow.png` and `lights.png`). They are made by the
 `screens` command below, with the demo visitors "Lerato" and "Sipho", so they can be redrawn after any change.
 
 ## Privacy
@@ -503,3 +505,6 @@ The rest:
   - `reports/progress.md` (the build log);
   - `training/` (rebuilds the trained model from the thesis recordings; never needed on the day: its own
     README).
+- **After Open Day (20 Nov 2026):** the home-test recordings were moved off the laptop into a private archive, so
+  there is no `bench/` until a new recording is made. A copy of the run logs, the scores and the build log is kept
+  there too.
